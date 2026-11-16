@@ -1,0 +1,39 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Browser profile and persistent cache (Contains session tokens and cookies)
+browser_profile/
+
+# Logs
+logs/*.log
+*.log
+
+# Runtime databases
+data/*.db
+*.sqlite3
+
+# Generated outputs & downloads (Keep input samples)
+data/output/*
+!data/output/.gitkeep
+data/reports/*
+!data/reports/.gitkeep
+data/backups/*
+!data/backups/.gitkeep
+
+# Pytest / Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Operating system / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

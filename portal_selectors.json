@@ -1,0 +1,120 @@
+{
+  "_comment": "Surepass Portal Configurable Selectors. Update these based on actual portal inspection.",
+  "urls": {
+    "login_url": "https://console.surepass.app/login",
+    "dashboard_url": "https://console.surepass.app/",
+    "dl_verification_url": "https://console.surepass.app/services/driving-license"
+  },
+  "login": {
+    "logged_in_indicators": [
+      "text=Dashboard",
+      "text=Services",
+      "text=Driving Licence",
+      "button[aria-label='User Profile']",
+      "a[href*='logout']",
+      ".user-profile-menu",
+      "[data-testid='user-profile']"
+    ],
+    "email_input": [
+      "input[type='email']",
+      "input[name='email']",
+      "input[placeholder*='Email' i]",
+      "input[id*='email' i]"
+    ],
+    "password_input": [
+      "input[type='password']",
+      "input[name='password']"
+    ],
+    "submit_button": [
+      "button[type='submit']",
+      "button:has-text('Sign In')",
+      "button:has-text('Login')"
+    ],
+    "otp_input": [
+      "input[name='otp']",
+      "input[placeholder*='OTP' i]",
+      "input[aria-label*='OTP' i]"
+    ]
+  },
+  "navigation": {
+    "dl_service_link": [
+      "a[href*='driving-license']",
+      "a:has-text('Driving Licence')",
+      "a:has-text('Driving License')",
+      "text=Driving Licence Verification",
+      "text=DL Verification"
+    ]
+  },
+  "dl_form": {
+    "dl_number_input": [
+      "input[placeholder*='DL' i]",
+      "input[placeholder*='Driving' i]",
+      "input[name*='dl' i]",
+      "input[id*='dl' i]",
+      "input[name*='id_number' i]",
+      "input[aria-label*='DL' i]"
+    ],
+    "dob_input": [
+      "input[placeholder*='DOB' i]",
+      "input[placeholder*='Birth' i]",
+      "input[placeholder*='DD/MM/YYYY' i]",
+      "input[placeholder*='DD-MM-YYYY' i]",
+      "input[name*='dob' i]",
+      "input[id*='dob' i]",
+      "input[type='date']"
+    ],
+    "dob_format": "DD-MM-YYYY",
+    "submit_button": [
+      "button[type='submit']",
+      "button:has-text('Verify')",
+      "button:has-text('Submit')",
+      "button:has-text('Check Status')"
+    ]
+  },
+  "results": {
+    "loading_indicator": [
+      ".spinner",
+      ".loading",
+      "[aria-busy='true']",
+      "svg.animate-spin",
+      "text=Verifying..."
+    ],
+    "success_indicators": [
+      "text=Verified",
+      "text=Active",
+      ".badge-success",
+      ".text-success",
+      "[data-status='success']",
+      "text=Verification Successful"
+    ],
+    "invalid_indicators": [
+      "text=Invalid DL",
+      "text=Invalid Driving Licence",
+      "text=Invalid details",
+      "text=Please enter a valid DL"
+    ],
+    "not_found_indicators": [
+      "text=Record Not Found",
+      "text=No record found",
+      "text=Details Not Found",
+      "text=DL does not exist"
+    ],
+    "error_indicators": [
+      "text=Server Error",
+      "text=Internal Server Error",
+      "text=Something went wrong",
+      "text=Failed to fetch",
+      ".alert-danger",
+      ".toast-error"
+    ],
+    "download_pdf_button": [
+      "button:has-text('Download Report')",
+      "button:has-text('Download PDF')",
+      "a:has-text('Download Report')",
+      "a[download]",
+      "button:has-text('Export PDF')",
+      "[aria-label*='Download' i]"
+    ]
+  }
+}
+
