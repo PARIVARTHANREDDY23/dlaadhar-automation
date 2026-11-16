@@ -20,6 +20,9 @@ class BrowserManager:
     def __init__(self, headless: bool = DEFAULT_HEADLESS, slow_mo: int = DEFAULT_SLOW_MO):
         self.headless = headless
         self.slow_mo = slow_mo
+        # Cloud/Linux fallback: Force headless if no graphical display is present
+        if sys.platform != "win32" and not os.environ.get("DISPLAY"):
+            self.headless = True
         self.playwright: Optional[Playwright] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
@@ -143,6 +146,12 @@ class BrowserManager:
                     self.kill_lingering_chrome()
                     self.clean_stale_locks(PROFILE_DIR)
                     time.sleep(1.5)
+                    self.context = self._create_context()
+                elif "Executable doesn't exist" in err_msg or "playwright install" in err_msg:
+                    logger.warning("Playwright Chromium browser binary missing. Auto-installing now...")
+                    import subprocess
+                    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+                    logger.info("Playwright Chromium installed. Retrying browser launch...")
                     self.context = self._create_context()
                 else:
                     raise launch_err
