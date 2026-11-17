@@ -41,13 +41,13 @@ async function checkServerStatus() {
     connBadge.innerText = "🟢 Connected";
 
     if (data.has_job) {
-      document.getElementById("jobIdText").innerText = data.job_id;
-      document.getElementById("jobFileText").innerText = data.filename || "Active batch";
+      document.getElementById("jobIdText").innerText = data.filename || "Active Batch";
+      document.getElementById("jobFileText").innerText = "Ready to verify";
       const stats = data.statistics || {};
       const pending = (stats.pending || 0) + (stats.processing || 0);
       document.getElementById("pendingCountBadge").innerText = `${pending} Pending`;
     } else {
-      document.getElementById("jobIdText").innerText = "No Active Job";
+      document.getElementById("jobIdText").innerText = "No File Loaded";
       document.getElementById("jobFileText").innerText = "Upload Excel in dashboard first";
       document.getElementById("pendingCountBadge").innerText = "0 Pending";
     }
@@ -186,3 +186,4 @@ document.addEventListener("DOMContentLoaded", async () => {
   checkServerStatus();
   setInterval(checkServerStatus, 5000);
 });
+

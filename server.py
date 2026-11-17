@@ -633,12 +633,15 @@ async def live_websocket_stream(websocket: WebSocket):
                     current_job = latest["job_id"]
                     job_mgr.current_job_id = current_job
 
+            job_info = db_manager.get_job(current_job) if current_job else None
+            filename = job_info.get("input_filename") if job_info else None
             stats = db_manager.get_job_statistics(current_job) if current_job else {}
             logs = get_recent_logs(max_lines=30)
 
             payload = {
                 "timestamp": time.time(),
                 "job_id": current_job,
+                "filename": filename,
                 "is_running": is_running,
                 "is_paused": is_paused,
                 "state": state,

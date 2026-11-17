@@ -34,11 +34,11 @@
           <span class="w-2 h-2 rounded-full bg-emerald-500 live-pulse"></span>
           <span id="wsStatusText">Connected</span>
         </div>
-        <select id="jobHistorySelect" onchange="switchJob(this.value)" class="text-xs bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded px-2 py-1 text-slate-700 font-mono focus:ring-2 focus:ring-blue-500">
-          <option value="">Job History (All Batches)</option>
+        <select id="jobHistorySelect" onchange="switchJob(this.value)" class="text-xs bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded px-2.5 py-1 text-slate-700 font-medium focus:ring-2 focus:ring-blue-500">
+          <option value="">📁 File History (Batches)</option>
         </select>
-        <span id="currentJobBadge" class="text-xs font-mono bg-blue-50 text-blue-700 px-2.5 py-1 rounded border border-blue-200 font-bold">
-          No Active Job
+        <span id="currentJobBadge" class="text-xs font-semibold bg-blue-50 text-blue-700 px-3 py-1 rounded-full border border-blue-200">
+          No File Loaded
         </span>
         <a href="/api/extension/download-zip" download title="Download Chrome Extension for colleagues" class="text-xs bg-slate-800 hover:bg-slate-900 text-white font-semibold px-2.5 py-1 rounded flex items-center space-x-1 shadow transition">
           <span>🧩 Extension</span>
@@ -195,7 +195,7 @@
             </thead>
             <tbody id="recordsTbody" class="divide-y divide-slate-100 font-mono">
               <tr>
-                <td colspan="8" class="text-center py-8 text-slate-400 font-sans">No job active. Upload an Excel sheet to begin.</td>
+                <td colspan="8" class="text-center py-8 text-slate-400 font-sans">No file loaded yet. Upload your driver Excel spreadsheet to begin.</td>
               </tr>
             </tbody>
           </table>
@@ -466,7 +466,13 @@
     function updateDashboardState(data) {
       if (data.job_id && data.job_id !== currentJobId) {
         currentJobId = data.job_id;
-        document.getElementById('currentJobBadge').innerText = 'Job: ' + currentJobId;
+        loadRecords();
+        loadJobHistory();
+      }
+      if (data.filename) {
+        document.getElementById('currentJobBadge').innerText = '📁 ' + data.filename;
+      } else if (!currentJobId) {
+        document.getElementById('currentJobBadge').innerText = 'No File Loaded';
       }
 
       // Update statistics
@@ -511,7 +517,7 @@
 
     // --- OPERATIONS ACTIONS ---
     async function startVerification() {
-      if (!currentJobId) return alert('Please upload an Excel file first.');
+      if (!currentJobId) return alert('Please upload a driver Excel file first.');
       const dryRun = document.getElementById('chkDryRun').checked;
       const headless = document.getElementById('chkHeadless').checked;
       try {
@@ -545,7 +551,7 @@
     }
 
     function downloadOutputExcel() {
-      if (!currentJobId) return alert('No active job to export.');
+      if (!currentJobId) return alert('No file loaded to export.');
       window.location.href = `/api/jobs/${currentJobId}/export`;
     }
 
@@ -830,28 +836,32 @@
         const data = await res.json();
         const select = document.getElementById('jobHistorySelect');
         if (data.jobs && data.jobs.length > 0) {
-          select.innerHTML = '<option value="">Switch Batch History ▼</option>' + data.jobs.map(j => {
+          select.innerHTML = '<option value="">📁 Switch File / Batch ▼</option>' + data.jobs.map(j => {
             const isSel = (j.job_id === currentJobId) ? 'selected' : '';
-            return `<option value="${j.job_id}" ${isSel}>${j.job_id} • ${escapeHtml(j.input_filename)} (${j.total_records} rows)</option>`;
+            return `<option value="${j.job_id}" ${isSel}>📄 ${escapeHtml(j.input_filename)} (${j.total_records} rows)</option>`;
           }).join('');
+        } else {
+          select.innerHTML = '<option value="">📁 No Previous Files</option>';
         }
       } catch (e) {
-        console.error('Error loading job history:', e);
+        console.error('Error loading file history:', e);
       }
     }
 
     async function switchJob(jobId) {
       if (!jobId) return;
       currentJobId = jobId;
-      document.getElementById('currentJobBadge').innerText = 'Job: ' + currentJobId;
       loadRecords();
       try {
         const res = await fetch(`/api/jobs/${currentJobId}`);
         const data = await res.json();
+        const fname = data.job?.input_filename || 'File Loaded';
+        document.getElementById('currentJobBadge').innerText = '📁 ' + fname;
         updateDashboardState({
           job_id: currentJobId,
+          filename: fname,
           statistics: data.statistics,
-          state: { stage: data.job.status, message: `Loaded job ${data.job.input_filename}` },
+          state: { stage: data.job.status, message: `Loaded file ${fname}` },
           is_running: false,
           is_paused: false
         });
@@ -869,12 +879,14 @@
         const data = await res.json();
         if (data.jobs && data.jobs.length > 0) {
           currentJobId = data.jobs[0].job_id;
-          document.getElementById('currentJobBadge').innerText = 'Job: ' + currentJobId;
+          document.getElementById('currentJobBadge').innerText = '📁 ' + data.jobs[0].input_filename;
           loadRecords();
+        } else {
+          document.getElementById('currentJobBadge').innerText = 'No File Loaded';
         }
         loadJobHistory();
       } catch (e) {
-        console.error('Error fetching latest job:', e);
+        console.error('Error fetching latest file:', e);
       }
     };
   </script>
