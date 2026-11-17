@@ -4,8 +4,14 @@ import time
 import json
 import base64
 import asyncio
+import io
+import csv
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any, List
+
+import httpx
+import pandas as pd
 
 from fastapi import FastAPI, Request, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
@@ -117,6 +123,159 @@ async def inspect_uploaded_excel(request: Request):
 
     except Exception as e:
         logger.error(f"Error inspecting upload: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def parse_gsheet_url(url: str) -> str:
+    """Parses various Google Sheets URL formats into an export CSV link."""
+    url = url.strip()
+    if not url:
+        raise ValueError("Google Sheet URL cannot be empty.")
+
+    if "output=csv" in url or "format=csv" in url:
+        return url
+
+    if "/pubhtml" in url:
+        return url.replace("/pubhtml", "/pub?output=csv")
+
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url)
+    if not match:
+        raise ValueError("Invalid Google Sheets link. Could not find spreadsheet ID.")
+
+    sheet_id = match.group(1)
+    gid_match = re.search(r"[#&?]gid=([0-9]+)", url)
+    gid = gid_match.group(1) if gid_match else None
+
+    export_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    if gid:
+        export_url += f"&gid={gid}"
+    return export_url
+
+
+@app.post("/api/gsheet/fetch")
+async def fetch_google_sheet(request: Request):
+    """
+    Fetches a live Google Sheet without requiring GCP credentials,
+    optionally filters out already-verified rows, saves to input directory,
+    and returns column inspection & auto-mapping for preview.
+    """
+    try:
+        body = await request.json()
+        sheet_url = (body.get("url") or "").strip()
+        filter_pending = body.get("filter_pending", True)
+
+        if not sheet_url:
+            raise HTTPException(status_code=400, detail="Please paste a valid Google Sheet link.")
+
+        try:
+            export_url = parse_gsheet_url(sheet_url)
+        except ValueError as ve:
+            raise HTTPException(status_code=400, detail=str(ve))
+
+        logger.info(f"Fetching Google Sheet: {export_url}")
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+
+        async with httpx.AsyncClient(follow_redirects=True, timeout=25.0) as client:
+            resp = await client.get(export_url, headers=headers)
+            if resp.status_code != 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Google Sheets returned status {resp.status_code}. Ensure the sheet's General Access is set to 'Anyone with the link can view'."
+                )
+
+            resp_bytes = resp.content
+
+            # Detect private redirect to Google login
+            if b"ServiceLogin" in resp_bytes or (b"<html" in resp_bytes and b"accounts.google.com" in resp_bytes):
+                raise HTTPException(
+                    status_code=403,
+                    detail="This Google Sheet is Private. Please open the Google Sheet, click Share (top right), set General Access to 'Anyone with the link can view' (or File > Share > Publish to web as CSV), then try again."
+                )
+
+        # Parse into pandas DataFrame
+        try:
+            if export_url.endswith("format=xlsx") or resp_bytes.startswith(b"PK\x03\x04"):
+                df = pd.read_excel(io.BytesIO(resp_bytes), dtype=str)
+            else:
+                try:
+                    df = pd.read_csv(io.BytesIO(resp_bytes), dtype=str)
+                except Exception:
+                    df = pd.read_excel(io.BytesIO(resp_bytes), dtype=str)
+        except Exception as pe:
+            raise HTTPException(status_code=400, detail=f"Could not parse sheet data: {str(pe)}")
+
+        if df.empty:
+            raise HTTPException(status_code=400, detail="The fetched Google Sheet has no rows.")
+
+        original_count = len(df)
+        filtered_df = df.copy()
+
+        # Filtering: Keep only pending cases if requested
+        skipped_count = 0
+        if filter_pending:
+            status_col = None
+            for col in df.columns:
+                c_clean = str(col).strip().lower().replace("_", " ")
+                if c_clean in ["verification status", "status", "dl status", "dl verification status", "state"]:
+                    status_col = col
+                    break
+
+            dl_col = None
+            for col in df.columns:
+                c_clean = str(col).strip().lower().replace("_", " ")
+                if "dl" in c_clean or "license" in c_clean or "licence" in c_clean:
+                    dl_col = col
+                    break
+
+            if status_col:
+                is_done = filtered_df[status_col].fillna("").astype(str).str.strip().str.lower().isin(
+                    ["verified", "valid", "active", "completed", "done", "success"]
+                )
+                filtered_df = filtered_df[~is_done]
+
+            if dl_col:
+                has_dl = filtered_df[dl_col].fillna("").astype(str).str.strip().str.len() > 3
+                filtered_df = filtered_df[has_dl]
+
+            filtered_df = filtered_df.dropna(how="all")
+            skipped_count = original_count - len(filtered_df)
+
+        if filtered_df.empty:
+            raise HTTPException(
+                status_code=400,
+                detail=f"All {original_count} rows in this Google Sheet are already verified or have empty DL numbers! Nothing pending to verify."
+            )
+
+        # Save to INPUT_DIR as .xlsx
+        sheet_id_sub = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", sheet_url)
+        s_label = sheet_id_sub.group(1)[:8] if sheet_id_sub else "Live"
+        file_id = f"upload_{int(time.time())}_GSheet_{s_label}.xlsx"
+        dest_path = INPUT_DIR / file_id
+        filtered_df.to_excel(dest_path, index=False, engine="openpyxl")
+
+        # Inspect headers using existing ExcelProcessor
+        proc = ExcelProcessor(str(dest_path))
+        columns, row_count = proc.load_and_inspect()
+        auto_mapping = proc.auto_detect_mapping(columns)
+
+        return {
+            "success": True,
+            "file_id": file_id,
+            "filename": f"GoogleSheet_{s_label}.xlsx",
+            "columns": columns,
+            "auto_mapping": auto_mapping,
+            "total_rows": row_count,
+            "original_rows": original_count,
+            "skipped_rows": skipped_count
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching Google Sheet: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -354,6 +513,76 @@ async def export_excel(job_id: str):
         filename=output_path.name,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+
+@app.get("/api/jobs/{job_id}/export-gsheet-csv")
+async def export_gsheet_csv(job_id: str):
+    """
+    Exports a clean CSV of verification outcomes formatted specifically
+    for Google Sheets paste/import without disturbing other columns.
+    """
+    job = db_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    with db_manager.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT row_index, gsm_id, phone_number, dl_number, dob, 
+                   verification_status, verification_date, verification_remarks, report_filename
+            FROM job_records
+            WHERE job_id = ?
+            ORDER BY row_index ASC
+        """, (job_id,))
+        records = cursor.fetchall()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "GSM ID", "Phone Number", "DL Number", "DOB",
+        "Verification Status", "Verification Date", "Remarks", "Report Filename"
+    ])
+    for r in records:
+        writer.writerow([
+            r["gsm_id"] or "",
+            r["phone_number"] or "",
+            r["dl_number"] or "",
+            r["dob"] or "",
+            r["verification_status"] or "Pending",
+            r["verification_date"] or "",
+            r["verification_remarks"] or "",
+            r["report_filename"] or ""
+        ])
+
+    csv_bytes = output.getvalue().encode("utf-8-sig")
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="GSheet_Update_{job_id}.csv"'}
+    )
+
+
+@app.get("/api/jobs/{job_id}/export-gsheet-tsv")
+async def export_gsheet_tsv(job_id: str):
+    """
+    Returns Tab-Separated Values (TSV) of verified records so users can
+    instantly copy and paste (Ctrl+V) directly into Google Sheets columns.
+    """
+    with db_manager.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT gsm_id, phone_number, dl_number, verification_status, verification_date, verification_remarks
+            FROM job_records
+            WHERE job_id = ?
+            ORDER BY row_index ASC
+        """, (job_id,))
+        records = cursor.fetchall()
+
+    lines = ["GSM ID\tPhone Number\tDL Number\tVerification Status\tVerification Date\tRemarks"]
+    for r in records:
+        lines.append(f"{r['gsm_id'] or ''}\t{r['phone_number'] or ''}\t{r['dl_number'] or ''}\t{r['verification_status'] or 'Pending'}\t{r['verification_date'] or ''}\t{r['verification_remarks'] or ''}")
+
+    return Response(content="\n".join(lines), media_type="text/plain; charset=utf-8")
 
 
 # --- CHROME EXTENSION CONNECTOR ENDPOINTS ---

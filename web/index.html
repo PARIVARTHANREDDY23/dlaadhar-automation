@@ -153,9 +153,17 @@
             <input type="checkbox" id="chkHeadless" class="rounded text-blue-600 focus:ring-blue-500 w-4 h-4">
             <span>👁️ Headless Browser (Background)</span>
           </label>
-          <button onclick="downloadOutputExcel()" class="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-lg flex items-center space-x-2 shadow transition">
+          <button onclick="downloadOutputExcel()" class="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-lg flex items-center space-x-2 shadow transition" title="Export full original Excel file with results appended">
             <i data-lucide="download" class="w-4 h-4"></i>
             <span>Export Excel</span>
+          </button>
+          <button onclick="downloadGSheetUpdateCSV()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg flex items-center space-x-1.5 shadow transition" title="Download clean CSV of verification results formatted to paste back into Google Sheets">
+            <i data-lucide="sheet" class="w-4 h-4"></i>
+            <span>📋 G-Sheet CSV</span>
+          </button>
+          <button onclick="copyGSheetUpdateToClipboard()" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 flex items-center space-x-1 transition" title="Copy results to clipboard for direct Ctrl+V into Google Sheets">
+            <i data-lucide="clipboard" class="w-4 h-4"></i>
+            <span>Copy (Ctrl+V)</span>
           </button>
         </div>
       </div>
@@ -204,17 +212,66 @@
 
     </div>
 
-    <!-- ==================== TAB 2: EXCEL UPLOAD ==================== -->
+    <!-- ==================== TAB 2: EXCEL / GSHEET UPLOAD ==================== -->
     <div id="tab-upload" class="tab-content hidden space-y-6">
       <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-        <h2 class="text-lg font-bold text-slate-900 mb-1">Upload Driver Excel Sheet</h2>
-        <p class="text-xs text-slate-500 mb-6">Supports .xlsx and .xls formats with columns: GSM ID, Phone Number, DL Number, DOB</p>
+        <h2 class="text-lg font-bold text-slate-900 mb-1">Load Driver Data (Excel or Live Google Sheet)</h2>
+        <p class="text-xs text-slate-500 mb-4">Upload a local Excel file or fetch directly from your team's live Google Sheet link.</p>
 
-        <div id="dropZone" class="border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-10 text-center transition cursor-pointer bg-slate-50">
-          <i data-lucide="file-spreadsheet" class="w-12 h-12 text-slate-400 mx-auto mb-3"></i>
-          <p class="text-sm font-semibold text-slate-700">Click to browse or drag and drop your Excel file here</p>
-          <p class="text-xs text-slate-400 mt-1">.xlsx or .xls (e.g. sample_drivers.xlsx)</p>
-          <input type="file" id="excelFileInput" accept=".xlsx, .xls" class="hidden" onchange="handleFileSelected(event)">
+        <!-- Source Selector Tabs -->
+        <div class="flex items-center space-x-2 border-b border-slate-200 pb-3 mb-5">
+          <button id="tabBtnExcel" onclick="switchUploadSource('excel')" class="px-4 py-2 text-xs font-bold rounded-lg bg-blue-50 text-blue-700 border border-blue-200 flex items-center space-x-2 transition">
+            <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+            <span>📁 Upload Local Excel (.xlsx / .xls)</span>
+          </button>
+          <button id="tabBtnGSheet" onclick="switchUploadSource('gsheet')" class="px-4 py-2 text-xs font-semibold rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 flex items-center space-x-2 transition">
+            <i data-lucide="globe" class="w-4 h-4"></i>
+            <span>🌐 Import Live Google Sheet (Link)</span>
+          </button>
+        </div>
+
+        <!-- 1. EXCEL DRAG & DROP ZONE -->
+        <div id="sourceExcelContainer">
+          <div id="dropZone" class="border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-10 text-center transition cursor-pointer bg-slate-50">
+            <i data-lucide="file-spreadsheet" class="w-12 h-12 text-slate-400 mx-auto mb-3"></i>
+            <p class="text-sm font-semibold text-slate-700">Click to browse or drag and drop your Excel file here</p>
+            <p class="text-xs text-slate-400 mt-1">.xlsx or .xls (e.g. sample_drivers.xlsx)</p>
+            <input type="file" id="excelFileInput" accept=".xlsx, .xls" class="hidden" onchange="handleFileSelected(event)">
+          </div>
+        </div>
+
+        <!-- 2. GOOGLE SHEETS LIVE IMPORT PANEL -->
+        <div id="sourceGSheetContainer" class="hidden space-y-4">
+          <div class="p-5 bg-gradient-to-r from-emerald-50 to-blue-50 border border-emerald-200 rounded-xl space-y-3">
+            <div class="flex items-start justify-between">
+              <div>
+                <h3 class="text-sm font-bold text-slate-900 flex items-center space-x-2">
+                  <span class="text-emerald-700">Live Google Sheet Direct Fetch</span>
+                  <span class="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full border border-emerald-300">No API Keys Required</span>
+                </h3>
+                <p class="text-xs text-slate-600 mt-1">Paste your Google Sheet link below. The engine will fetch pending driver cases directly into the verification queue.</p>
+              </div>
+            </div>
+
+            <div class="space-y-2">
+              <label class="block text-xs font-bold text-slate-700">Google Sheet Sharing Link:</label>
+              <div class="flex flex-col sm:flex-row gap-2">
+                <input type="text" id="gsheetUrlInput" placeholder="https://docs.google.com/spreadsheets/d/.../edit?usp=sharing" class="flex-1 px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono">
+                <button id="btnFetchGSheet" onclick="fetchLiveGoogleSheet()" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow flex items-center justify-center space-x-2 transition">
+                  <i data-lucide="cloud-download" class="w-4 h-4"></i>
+                  <span>Fetch & Filter Sheet</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-emerald-200/60 text-xs text-slate-600">
+              <label class="flex items-center space-x-2 cursor-pointer font-medium">
+                <input type="checkbox" id="chkFilterPending" checked class="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4">
+                <span>Filter only <b>Pending / Unverified</b> drivers (skips rows already marked Verified / Completed)</span>
+              </label>
+              <span class="text-[11px] text-slate-500">💡 Sheet General Access must be <i>"Anyone with the link can view"</i></span>
+            </div>
+          </div>
         </div>
 
         <div id="uploadStatusMsg" class="mt-4 hidden p-3 rounded-lg text-xs font-medium"></div>
@@ -562,6 +619,24 @@
       window.location.href = `/api/jobs/${currentJobId}/export`;
     }
 
+    function downloadGSheetUpdateCSV() {
+      if (!currentJobId) return alert('No active job loaded to export.');
+      window.location.href = `/api/jobs/${currentJobId}/export-gsheet-csv`;
+    }
+
+    async function copyGSheetUpdateToClipboard() {
+      if (!currentJobId) return alert('No active job loaded.');
+      try {
+        const res = await fetch(`/api/jobs/${currentJobId}/export-gsheet-tsv`);
+        if (!res.ok) throw new Error('Failed to retrieve TSV data');
+        const text = await res.text();
+        await navigator.clipboard.writeText(text);
+        alert('📋 Verification results copied to clipboard!\n\nYou can now go to your Google Sheet, select the target cell, and press Ctrl+V to paste the results.');
+      } catch (err) {
+        alert('Could not copy to clipboard: ' + err);
+      }
+    }
+
     // --- RECORDS TABLE ---
     let searchTimeout = null;
     function debounceLoadRecords() {
@@ -604,6 +679,80 @@
       if (status === 'Not Verified') color = 'bg-amber-50 text-amber-700 border-amber-200';
       if (status === 'Invalid Details' || status === 'Verification Error') color = 'bg-rose-50 text-rose-700 border-rose-200';
       return `<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold border ${color}">${escapeHtml(status || 'Pending')}</span>`;
+    }
+
+    // --- SOURCE SWITCHER (EXCEL vs GOOGLE SHEETS) ---
+    function switchUploadSource(src) {
+      const btnExcel = document.getElementById('tabBtnExcel');
+      const btnGSheet = document.getElementById('tabBtnGSheet');
+      const boxExcel = document.getElementById('sourceExcelContainer');
+      const boxGSheet = document.getElementById('sourceGSheetContainer');
+
+      if (src === 'excel') {
+        btnExcel.className = 'px-4 py-2 text-xs font-bold rounded-lg bg-blue-50 text-blue-700 border border-blue-200 flex items-center space-x-2 transition';
+        btnGSheet.className = 'px-4 py-2 text-xs font-semibold rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 flex items-center space-x-2 transition';
+        boxExcel.classList.remove('hidden');
+        boxGSheet.classList.add('hidden');
+      } else {
+        btnGSheet.className = 'px-4 py-2 text-xs font-bold rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center space-x-2 transition';
+        btnExcel.className = 'px-4 py-2 text-xs font-semibold rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 flex items-center space-x-2 transition';
+        boxExcel.classList.add('hidden');
+        boxGSheet.classList.remove('hidden');
+      }
+    }
+
+    async function fetchLiveGoogleSheet() {
+      const urlInput = document.getElementById('gsheetUrlInput');
+      const url = (urlInput.value || '').trim();
+      if (!url) return alert('Please paste your Google Sheet link first.');
+
+      const filterPending = document.getElementById('chkFilterPending').checked;
+      const statusMsg = document.getElementById('uploadStatusMsg');
+      const mappingCard = document.getElementById('columnMappingCard');
+      const previewCard = document.getElementById('previewCard');
+      const btnFetch = document.getElementById('btnFetchGSheet');
+
+      statusMsg.className = 'mt-4 p-3 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 block';
+      statusMsg.innerText = 'Connecting to Google Sheets and fetching live data...';
+      mappingCard.classList.add('hidden');
+      previewCard.classList.add('hidden');
+      btnFetch.disabled = true;
+      btnFetch.innerText = 'Fetching...';
+
+      try {
+        const res = await fetch('/api/gsheet/fetch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: url, filter_pending: filterPending })
+        });
+        const json = await res.json();
+
+        if (res.ok) {
+          currentTempFileId = json.file_id;
+          statusMsg.className = 'mt-4 p-3 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 block';
+          let skipText = json.skipped_rows > 0 ? ` (${json.skipped_rows} already-verified rows filtered out)` : '';
+          statusMsg.innerText = `✓ Fetched Google Sheet: ${json.total_rows} pending drivers imported${skipText}. Please confirm column mapping below.`;
+          document.getElementById('inspectSummary').innerText = `Google Sheet: ${json.total_rows} pending rows${skipText}`;
+
+          populateDropdown('mapGsmId', json.columns, json.auto_mapping.gsm_id);
+          populateDropdown('mapPhone', json.columns, json.auto_mapping.phone_number);
+          populateDropdown('mapDl', json.columns, json.auto_mapping.dl_number);
+          populateDropdown('mapDob', json.columns, json.auto_mapping.dob);
+
+          mappingCard.classList.remove('hidden');
+          lucide.createIcons();
+        } else {
+          statusMsg.className = 'mt-4 p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200 block';
+          statusMsg.innerText = 'Google Sheet Error: ' + (json.detail || 'Could not fetch Google Sheet.');
+        }
+      } catch (err) {
+        statusMsg.className = 'mt-4 p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200 block';
+        statusMsg.innerText = 'Network error fetching Google Sheet: ' + err;
+      } finally {
+        btnFetch.disabled = false;
+        btnFetch.innerHTML = '<i data-lucide="cloud-download" class="w-4 h-4"></i><span>Fetch & Filter Sheet</span>';
+        lucide.createIcons();
+      }
     }
 
     // --- EXCEL UPLOAD & COLUMN MAPPING ---
