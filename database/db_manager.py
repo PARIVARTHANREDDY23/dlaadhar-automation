@@ -50,6 +50,8 @@ def init_db(db_path: Optional[Path] = None):
                 row_index INTEGER NOT NULL,
                 gsm_id TEXT,
                 phone_number TEXT,
+                dl_number TEXT,
+                dob TEXT,
                 dl_number_masked TEXT,
                 dob_masked TEXT,
                 processing_status TEXT NOT NULL DEFAULT 'Pending',
@@ -67,6 +69,13 @@ def init_db(db_path: Optional[Path] = None):
             )
         """)
         
+        # Schema migration check
+        for col in ["dl_number", "dob"]:
+            try:
+                cursor.execute(f"ALTER TABLE job_records ADD COLUMN {col} TEXT")
+            except Exception:
+                pass
+
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_records_job ON job_records(job_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_records_status ON job_records(job_id, processing_status)")
         conn.commit()
@@ -90,14 +99,16 @@ def insert_job_records(job_id: str, records: List[Dict[str, Any]]):
         for r in records:
             cursor.execute("""
                 INSERT INTO job_records (
-                    job_id, row_index, gsm_id, phone_number, dl_number_masked, dob_masked,
+                    job_id, row_index, gsm_id, phone_number, dl_number, dob, dl_number_masked, dob_masked,
                     processing_status, verification_status, report_download_status, verification_remarks
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 job_id,
                 r.get("row_index", 0),
                 r.get("gsm_id", ""),
                 r.get("phone_number", ""),
+                r.get("dl_number", ""),
+                r.get("dob", ""),
                 r.get("dl_number_masked", ""),
                 r.get("dob_masked", ""),
                 r.get("processing_status", ProcessingStatus.PENDING.value),

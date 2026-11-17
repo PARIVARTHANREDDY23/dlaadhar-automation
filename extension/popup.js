@@ -68,12 +68,18 @@ async function runAutomationLoop() {
   log("🚀 Starting batch verification loop...", "info");
 
   while (isAutomating) {
-    // 1. Check active tab
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    // 1. Locate Surepass tab
+    let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || !tab.url || !tab.url.includes("console.surepass.app")) {
-      log("⚠️ Please open your Surepass console tab in Chrome!", "warn");
-      await sleep(3000);
-      continue;
+      const surepassTabs = await chrome.tabs.query({ url: "*://console.surepass.app/*" });
+      if (surepassTabs.length > 0) {
+        tab = surepassTabs[0];
+        try { chrome.tabs.update(tab.id, { active: true }); } catch (e) {}
+      } else {
+        log("⚠️ Please open https://console.surepass.app in a Chrome tab!", "warn");
+        await sleep(3000);
+        continue;
+      }
     }
 
     // 2. Fetch next pending driver from central server

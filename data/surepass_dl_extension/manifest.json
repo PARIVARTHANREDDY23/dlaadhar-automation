@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Surepass DL Verification Assistant",
+  "version": "1.0.0",
+  "description": "Automated Driving Licence verification assistant connected to central DL Automation backend.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "*://console.surepass.app/*",
+    "http://*/*",
+    "https://*/*"
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Surepass DL Verification Assistant",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://console.surepass.app/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}

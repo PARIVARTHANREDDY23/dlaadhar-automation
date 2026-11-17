@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Surepass DL Assistant</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { width: 380px; padding: 14px; background: #F8FAFC; color: #1E293B; font-size: 13px; }
+    
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #E2E8F0; }
+    .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; color: #0F172A; }
+    .status-badge { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 9999px; }
+    .status-online { background: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; }
+    .status-offline { background: #FFF1F2; color: #BE123C; border: 1px solid #FECDD3; }
+
+    .card { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 10px; padding: 12px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+    .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748B; margin-bottom: 6px; }
+
+    .config-row { display: flex; gap: 6px; margin-bottom: 10px; }
+    .config-input { flex: 1; padding: 6px 10px; font-size: 12px; border: 1px solid #CBD5E1; border-radius: 6px; background: #FFFFFF; }
+    .btn-save { padding: 6px 12px; font-size: 12px; font-weight: 600; background: #2563EB; color: #FFFFFF; border: none; border-radius: 6px; cursor: pointer; }
+
+    .driver-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 12px; }
+    .driver-val { font-weight: 600; color: #0F172A; font-family: monospace; }
+
+    .btn-group { display: flex; gap: 6px; margin-bottom: 12px; }
+    .btn { flex: 1; padding: 8px 12px; font-size: 12px; font-weight: 600; border-radius: 6px; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px; transition: 0.15s; }
+    .btn-primary { background: #2563EB; color: #FFFFFF; }
+    .btn-primary:hover { background: #1D4ED8; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-danger { background: #E11D48; color: #FFFFFF; }
+    .btn-danger:hover { background: #BE123C; }
+
+    .terminal { background: #0F172A; color: #94A3B8; border-radius: 8px; padding: 10px; font-family: monospace; font-size: 11px; height: 110px; overflow-y: auto; line-height: 1.4; }
+    .log-info { color: #6EE7B7; }
+    .log-warn { color: #FCD34D; }
+    .log-err { color: #FDA4AF; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="brand">
+      <span>🚗</span>
+      <span>Surepass DL Assistant</span>
+    </div>
+    <span id="connBadge" class="status-badge status-offline">Connecting...</span>
+  </div>
+
+  <!-- SERVER CONFIG -->
+  <div class="config-row">
+    <input type="text" id="backendUrl" class="config-input" placeholder="http://192.168.100.193:8002">
+    <button id="btnSaveConfig" class="btn-save">Connect</button>
+  </div>
+
+  <!-- ACTIVE BATCH CARD -->
+  <div class="card">
+    <div class="card-title">Active Batch Queue</div>
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <div>
+        <div id="jobIdText" style="font-weight:700; font-size:13px; color:#0F172A;">No File Loaded</div>
+        <div id="jobFileText" style="font-size:11px; color:#64748B;">Upload an Excel sheet in dashboard</div>
+      </div>
+      <div id="pendingCountBadge" style="font-size:12px; font-weight:700; background:#EFF6FF; color:#1D4ED8; padding:4px 8px; border-radius:6px; border:1px solid #BFDBFE;">
+        0 Pending
+      </div>
+    </div>
+  </div>
+
+  <!-- CURRENT DRIVER IN PROGRESS -->
+  <div class="card">
+    <div class="card-title">Current Driver Target</div>
+    <div class="driver-grid">
+      <div>
+        <span style="color:#64748B;">GSM ID:</span>
+        <div id="curGsmId" class="driver-val">-</div>
+      </div>
+      <div>
+        <span style="color:#64748B;">DL Number:</span>
+        <div id="curDlNumber" class="driver-val">-</div>
+      </div>
+      <div>
+        <span style="color:#64748B;">Phone:</span>
+        <div id="curPhone" class="driver-val">-</div>
+      </div>
+      <div>
+        <span style="color:#64748B;">DOB:</span>
+        <div id="curDob" class="driver-val">-</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ACTION CONTROLS -->
+  <div class="btn-group">
+    <button id="btnStart" class="btn btn-primary">
+      <span>▶️ Start Auto-Verify</span>
+    </button>
+    <button id="btnStop" class="btn btn-danger" disabled>
+      <span>⏹️ Stop</span>
+    </button>
+  </div>
+
+  <!-- LIVE LOG TERMINAL -->
+  <div class="terminal" id="termLog">
+    <div>Ready. Open Surepass DL Verification page in Chrome and click Start.</div>
+  </div>
+
+  <div style="margin-top:10px; text-align:center;">
+    <a href="#" id="linkDashboard" style="font-size:11px; color:#2563EB; text-decoration:none; font-weight:600;">
+      Open Central Web Dashboard &rarr;
+    </a>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
+

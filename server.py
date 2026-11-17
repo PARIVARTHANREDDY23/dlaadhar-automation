@@ -400,15 +400,46 @@ async def extension_next_driver():
         return {"has_driver": False, "message": "All drivers in batch have been verified!"}
 
     rec = pending_records[0]
+    dl_val = rec.get("dl_number") or ""
+    dob_val = rec.get("dob") or ""
+
+    # If unmasked DL or DOB is missing from DB record, backfill from original Excel
+    if not dl_val or not dob_val:
+        job = db_manager.get_job(current_job)
+        if job and job.get("input_file_path"):
+            try:
+                import pandas as pd
+                df_raw = pd.read_excel(job["input_file_path"])
+                idx = rec["row_index"] - 2
+                if 0 <= idx < len(df_raw):
+                    row = df_raw.iloc[idx]
+                    for col in df_raw.columns:
+                        c_lower = str(col).strip().lower()
+                        if not dl_val and c_lower in ["dl", "dl number", "dl_number", "driving licence", "driving license", "dl_no"]:
+                            dl_val = str(row[col]).strip() if pd.notna(row[col]) else ""
+                        if not dob_val and c_lower in ["dob", "date of birth", "birth date", "d.o.b"]:
+                            if pd.notna(row[col]):
+                                dob_val = str(row[col]).split(" ")[0].strip()
+                    
+                    if dl_val or dob_val:
+                        with db_manager.get_connection() as conn:
+                            conn.cursor().execute(
+                                "UPDATE job_records SET dl_number = ?, dob = ? WHERE id = ?",
+                                (dl_val, dob_val, rec["id"])
+                            )
+                            conn.commit()
+            except Exception as e:
+                logger.warning(f"Could not backfill driver info from Excel: {e}")
+
     return {
         "has_driver": True,
         "job_id": current_job,
         "record_id": rec["id"],
         "row_index": rec["row_index"],
-        "gsm_id": rec["gsm_id"],
-        "phone_number": rec["phone_number"],
-        "dl_number": rec["dl_number"],
-        "dob": rec["dob"],
+        "gsm_id": rec.get("gsm_id", ""),
+        "phone_number": rec.get("phone_number", ""),
+        "dl_number": dl_val,
+        "dob": dob_val,
         "pending_count": len(pending_records)
     }
 
