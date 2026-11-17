@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  automation-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dlaadhar_automation
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./browser_profile:/app/browser_profile
+    restart: unless-stopped

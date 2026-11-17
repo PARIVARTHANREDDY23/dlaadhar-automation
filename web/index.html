@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Surepass DL Verification Automation</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    @keyframes pulse-slow {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .live-pulse { animation: pulse-slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen font-sans flex flex-col">
+
+  <!-- TOP NAV -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xl shadow">
+          🚗
+        </div>
+        <div>
+          <h1 class="text-lg font-bold text-slate-900 leading-tight">DL Verification Automation</h1>
+          <p class="text-xs text-slate-500">Enterprise Surepass Automated Batch Queue</p>
+        </div>
+      </div>
+
+      <div class="flex items-center space-x-4">
+        <div id="wsStatusBadge" class="flex items-center space-x-2 text-xs font-semibold px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 live-pulse"></span>
+          <span id="wsStatusText">Connected</span>
+        </div>
+        <span id="currentJobBadge" class="text-xs font-mono bg-slate-100 text-slate-600 px-2.5 py-1 rounded border border-slate-200">
+          No Active Job
+        </span>
+      </div>
+    </div>
+
+    <!-- TABS BAR -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex space-x-8 border-t border-slate-100">
+      <button onclick="switchTab('tab-ops')" id="btn-tab-ops" class="tab-btn py-3 px-1 border-b-2 border-blue-600 text-blue-600 font-semibold text-sm flex items-center space-x-2">
+        <i data-lucide="activity" class="w-4 h-4"></i>
+        <span>Operations Dashboard</span>
+      </button>
+      <button onclick="switchTab('tab-upload')" id="btn-tab-upload" class="tab-btn py-3 px-1 border-b-2 border-transparent text-slate-500 hover:text-slate-700 font-medium text-sm flex items-center space-x-2">
+        <i data-lucide="upload-cloud" class="w-4 h-4"></i>
+        <span>Upload Excel</span>
+      </button>
+      <button onclick="switchTab('tab-browser')" id="btn-tab-browser" class="tab-btn py-3 px-1 border-b-2 border-transparent text-slate-500 hover:text-slate-700 font-medium text-sm flex items-center space-x-2">
+        <i data-lucide="globe" class="w-4 h-4"></i>
+        <span>Cloud Browser Mirror</span>
+      </button>
+      <button onclick="switchTab('tab-reports')" id="btn-tab-reports" class="tab-btn py-3 px-1 border-b-2 border-transparent text-slate-500 hover:text-slate-700 font-medium text-sm flex items-center space-x-2">
+        <i data-lucide="file-check" class="w-4 h-4"></i>
+        <span>PDF Reports</span>
+      </button>
+      <button onclick="switchTab('tab-logs')" id="btn-tab-logs" class="tab-btn py-3 px-1 border-b-2 border-transparent text-slate-500 hover:text-slate-700 font-medium text-sm flex items-center space-x-2">
+        <i data-lucide="terminal" class="w-4 h-4"></i>
+        <span>Live Terminal</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN CONTAINER -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full">
+
+    <!-- ==================== TAB 1: OPERATIONS ==================== -->
+    <div id="tab-ops" class="tab-content space-y-6">
+
+      <!-- METRIC CARDS -->
+      <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <p class="text-xs font-medium text-slate-500 uppercase">Total Drivers</p>
+          <p id="stat-total" class="text-2xl font-bold text-slate-900 mt-1">0</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <p class="text-xs font-medium text-emerald-600 uppercase">Verified</p>
+          <p id="stat-verified" class="text-2xl font-bold text-emerald-600 mt-1">0</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <p class="text-xs font-medium text-amber-600 uppercase">Not Verified</p>
+          <p id="stat-not-verified" class="text-2xl font-bold text-amber-600 mt-1">0</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <p class="text-xs font-medium text-blue-600 uppercase">Pending</p>
+          <p id="stat-pending" class="text-2xl font-bold text-blue-600 mt-1">0</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <p class="text-xs font-medium text-rose-600 uppercase">Failed</p>
+          <p id="stat-failed" class="text-2xl font-bold text-rose-600 mt-1">0</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <p class="text-xs font-medium text-indigo-600 uppercase">PDF Reports</p>
+          <p id="stat-reports" class="text-2xl font-bold text-indigo-600 mt-1">0</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <p class="text-xs font-medium text-slate-700 uppercase">Progress</p>
+          <p id="stat-percentage" class="text-2xl font-bold text-slate-900 mt-1">0%</p>
+        </div>
+      </div>
+
+      <!-- PROGRESS BAR -->
+      <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <span id="stageBadge" class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">Idle</span>
+            <span id="stageMessage" class="text-sm text-slate-600 font-medium">Ready to start verification.</span>
+          </div>
+          <span id="progressRatio" class="text-xs font-mono text-slate-500">0 / 0</span>
+        </div>
+        <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+          <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+      </div>
+
+      <!-- CONTROLS ROW -->
+      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
+        <div class="flex flex-wrap items-center gap-3">
+          <button id="btnStart" onclick="startVerification()" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-sm shadow flex items-center space-x-2 transition disabled:opacity-50">
+            <i data-lucide="play" class="w-4 h-4"></i>
+            <span>Start Verification</span>
+          </button>
+          <button id="btnPause" onclick="pauseVerification()" class="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-semibold text-sm shadow flex items-center space-x-2 transition disabled:opacity-50">
+            <i data-lucide="pause" class="w-4 h-4"></i>
+            <span>Pause</span>
+          </button>
+          <button id="btnResume" onclick="resumeVerification()" class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold text-sm shadow flex items-center space-x-2 transition disabled:opacity-50">
+            <i data-lucide="play-circle" class="w-4 h-4"></i>
+            <span>Resume</span>
+          </button>
+          <button id="btnStop" onclick="stopVerification()" class="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-semibold text-sm shadow flex items-center space-x-2 transition disabled:opacity-50">
+            <i data-lucide="square" class="w-4 h-4"></i>
+            <span>Stop</span>
+          </button>
+        </div>
+
+        <div class="flex items-center space-x-4">
+          <label class="flex items-center space-x-2 text-xs font-medium text-slate-700 cursor-pointer">
+            <input type="checkbox" id="chkDryRun" class="rounded text-blue-600 focus:ring-blue-500 w-4 h-4">
+            <span>🧪 Dry Run Mode</span>
+          </label>
+          <label class="flex items-center space-x-2 text-xs font-medium text-slate-700 cursor-pointer">
+            <input type="checkbox" id="chkHeadless" checked class="rounded text-blue-600 focus:ring-blue-500 w-4 h-4">
+            <span>👁️ Headless Browser</span>
+          </label>
+          <button onclick="downloadOutputExcel()" class="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-lg flex items-center space-x-2 shadow transition">
+            <i data-lucide="download" class="w-4 h-4"></i>
+            <span>Export Excel</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- QUEUE TABLE -->
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 class="text-base font-bold text-slate-900">Verification Driver Records</h2>
+            <p class="text-xs text-slate-500">Live queue updated after each processed record</p>
+          </div>
+          <div class="flex items-center space-x-3">
+            <input type="text" id="recordSearch" oninput="debounceLoadRecords()" placeholder="Search GSM ID / Phone..." class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs w-48 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <select id="statusFilter" onchange="loadRecords()" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="All">All Statuses</option>
+              <option value="Verified">Verified</option>
+              <option value="Not Verified">Not Verified</option>
+              <option value="Pending">Pending</option>
+              <option value="Failed">Failed</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 text-slate-500 font-semibold uppercase border-b border-slate-200">
+              <tr>
+                <th class="px-4 py-3">Row</th>
+                <th class="px-4 py-3">GSM ID</th>
+                <th class="px-4 py-3">Phone</th>
+                <th class="px-4 py-3">DL Number (Masked)</th>
+                <th class="px-4 py-3">Verification</th>
+                <th class="px-4 py-3">Processing</th>
+                <th class="px-4 py-3">Report PDF</th>
+                <th class="px-4 py-3">Remarks</th>
+              </tr>
+            </thead>
+            <tbody id="recordsTbody" class="divide-y divide-slate-100 font-mono">
+              <tr>
+                <td colspan="8" class="text-center py-8 text-slate-400 font-sans">No job active. Upload an Excel sheet to begin.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ==================== TAB 2: EXCEL UPLOAD ==================== -->
+    <div id="tab-upload" class="tab-content hidden space-y-6">
+      <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        <h2 class="text-lg font-bold text-slate-900 mb-1">Upload Driver Excel Sheet</h2>
+        <p class="text-xs text-slate-500 mb-6">Supports .xlsx and .xls formats with columns: GSM ID, Phone Number, DL Number, DOB</p>
+
+        <div id="dropZone" class="border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-10 text-center transition cursor-pointer bg-slate-50">
+          <i data-lucide="file-spreadsheet" class="w-12 h-12 text-slate-400 mx-auto mb-3"></i>
+          <p class="text-sm font-semibold text-slate-700">Click to browse or drag and drop your Excel file here</p>
+          <p class="text-xs text-slate-400 mt-1">.xlsx or .xls (e.g. sample_drivers.xlsx)</p>
+          <input type="file" id="excelFileInput" accept=".xlsx, .xls" class="hidden" onchange="handleFileSelected(event)">
+        </div>
+
+        <div id="uploadStatusMsg" class="mt-4 hidden p-3 rounded-lg text-xs font-medium"></div>
+      </div>
+
+      <!-- PREVIEW TABLE -->
+      <div id="previewCard" class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden hidden">
+        <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+          <div>
+            <h3 class="text-base font-bold text-slate-900" id="previewTitle">Parsed Records Preview</h3>
+            <p class="text-xs text-slate-500" id="previewSubtitle">Validated fields with preserved leading zeros and formatted dates</p>
+          </div>
+          <button onclick="switchTab('tab-ops')" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow">
+            Proceed to Operations &rarr;
+          </button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 text-slate-500 font-semibold uppercase border-b border-slate-200">
+              <tr>
+                <th class="px-4 py-3">Row</th>
+                <th class="px-4 py-3">GSM ID</th>
+                <th class="px-4 py-3">Phone</th>
+                <th class="px-4 py-3">DL Number (Masked)</th>
+                <th class="px-4 py-3">DOB (Masked)</th>
+                <th class="px-4 py-3">Valid?</th>
+                <th class="px-4 py-3">Validation Notes</th>
+              </tr>
+            </thead>
+            <tbody id="previewTbody" class="divide-y divide-slate-100 font-mono"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== TAB 3: CLOUD BROWSER MIRROR ==================== -->
+    <div id="tab-browser" class="tab-content hidden space-y-6">
+      <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-6">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">Live Portal Screen & Remote Login</h2>
+            <p class="text-xs text-slate-500">View and control the Chromium browser live inside this window — even on headless cloud servers!</p>
+          </div>
+          <div class="flex items-center space-x-3">
+            <button onclick="launchBrowser()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow flex items-center space-x-2">
+              <i data-lucide="play" class="w-4 h-4"></i>
+              <span>Launch / Focus Portal</span>
+            </button>
+            <button onclick="refreshScreenshot()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold border border-slate-300 flex items-center space-x-2">
+              <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+              <span>Refresh Screen</span>
+            </button>
+            <button onclick="closeBrowser()" class="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold border border-rose-200 flex items-center space-x-2">
+              <i data-lucide="x-circle" class="w-4 h-4"></i>
+              <span>Close Browser</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- CANVAS / SCREENSHOT VIEWER -->
+        <div class="bg-slate-900 rounded-xl overflow-hidden border border-slate-700 flex flex-col items-center justify-center p-2 min-h-[360px] relative">
+          <img id="browserScreenshot" src="/api/browser/screenshot" class="max-w-full rounded shadow" onerror="this.classList.add('hidden'); document.getElementById('screenPlaceholder').classList.remove('hidden');" onload="this.classList.remove('hidden'); document.getElementById('screenPlaceholder').classList.add('hidden');">
+          <div id="screenPlaceholder" class="text-center text-slate-400 py-20">
+            <i data-lucide="monitor-off" class="w-12 h-12 mx-auto mb-2 opacity-50"></i>
+            <p class="text-sm font-semibold">Browser is idle or launching</p>
+            <p class="text-xs text-slate-500">Click 'Launch / Focus Portal' above to start the session</p>
+          </div>
+        </div>
+
+        <!-- REMOTE INTERACTION FORMS -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-slate-200">
+          <!-- LOGIN FORM -->
+          <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h3 class="text-sm font-bold text-slate-800 flex items-center space-x-2">
+              <i data-lucide="key" class="w-4 h-4 text-blue-600"></i>
+              <span>1. Remote Login Form</span>
+            </h3>
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Email / Mobile Number</label>
+              <input type="text" id="remUsername" class="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white" placeholder="operator@company.com">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Password</label>
+              <input type="password" id="remPassword" class="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white" placeholder="••••••••">
+            </div>
+            <button onclick="submitRemoteLogin()" class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow">
+              Submit Login Credentials
+            </button>
+          </div>
+
+          <!-- OTP FORM -->
+          <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h3 class="text-sm font-bold text-slate-800 flex items-center space-x-2">
+              <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600"></i>
+              <span>2. Remote OTP / Code Submission</span>
+            </h3>
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Enter OTP / Verification Code</label>
+              <input type="text" id="remOtp" class="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white" placeholder="6-digit OTP code">
+            </div>
+            <p class="text-[11px] text-slate-500">Inspect the screenshot above to read any CAPTCHA or confirm the OTP prompt.</p>
+            <button onclick="submitRemoteOtp()" class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow">
+              Submit OTP Code
+            </button>
+            <button onclick="navigateDLService()" class="w-full py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-semibold">
+              Go to DL Verification Service &rarr;
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== TAB 4: PDF REPORTS ==================== -->
+    <div id="tab-reports" class="tab-content hidden space-y-6">
+      <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">Downloaded PDF Verification Reports</h2>
+            <p class="text-xs text-slate-500">Validated reports saved as <code class="font-mono bg-slate-100 px-1 py-0.5 rounded text-slate-700">GSMID_PHONENUMBER_DL_Report.pdf</code></p>
+          </div>
+          <a href="/api/reports/zip" download class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow flex items-center space-x-2">
+            <i data-lucide="archive" class="w-4 h-4"></i>
+            <span>Download All Reports (ZIP)</span>
+          </a>
+        </div>
+
+        <div id="reportsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div class="p-8 text-center text-slate-400 col-span-3">Loading reports...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== TAB 5: LIVE LOGS ==================== -->
+    <div id="tab-logs" class="tab-content hidden space-y-4">
+      <div class="bg-slate-900 text-slate-200 p-4 rounded-xl border border-slate-800 shadow font-mono text-xs">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
+          <div class="flex items-center space-x-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 live-pulse"></span>
+            <span class="font-bold text-slate-300">Live Automation Console</span>
+          </div>
+          <button onclick="clearTerminalLogs()" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px]">
+            Clear Terminal
+          </button>
+        </div>
+        <div id="terminalBody" class="h-96 overflow-y-auto space-y-1 pr-2">
+          <div class="text-slate-500">Connecting to live console stream...</div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- JAVASCRIPT APP LOGIC -->
+  <script>
+    let currentJobId = null;
+    let ws = null;
+    let autoRefreshScreen = false;
+
+    // --- TAB SWITCHER ---
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('border-blue-600', 'text-blue-600');
+        btn.classList.add('border-transparent', 'text-slate-500');
+      });
+      document.getElementById(tabId).classList.remove('hidden');
+      const activeBtn = document.getElementById('btn-' + tabId);
+      activeBtn.classList.add('border-blue-600', 'text-blue-600');
+      activeBtn.classList.remove('border-transparent', 'text-slate-500');
+
+      if (tabId === 'tab-reports') loadReports();
+      if (tabId === 'tab-browser') refreshScreenshot();
+      if (tabId === 'tab-ops' && currentJobId) loadRecords();
+    }
+
+    // --- WEBSOCKET CONNECTION ---
+    function connectWebSocket() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws/live`;
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        document.getElementById('wsStatusBadge').className = 'flex items-center space-x-2 text-xs font-semibold px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200';
+        document.getElementById('wsStatusText').innerText = 'Connected';
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          updateDashboardState(data);
+        } catch (e) {
+          console.error('Error parsing WS message:', e);
+        }
+      };
+
+      ws.onclose = () => {
+        document.getElementById('wsStatusBadge').className = 'flex items-center space-x-2 text-xs font-semibold px-3 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200';
+        document.getElementById('wsStatusText').innerText = 'Reconnecting...';
+        setTimeout(connectWebSocket, 2000);
+      };
+    }
+
+    function updateDashboardState(data) {
+      if (data.job_id && data.job_id !== currentJobId) {
+        currentJobId = data.job_id;
+        document.getElementById('currentJobBadge').innerText = 'Job: ' + currentJobId;
+      }
+
+      // Update statistics
+      const stats = data.statistics || {};
+      document.getElementById('stat-total').innerText = stats.total || 0;
+      document.getElementById('stat-verified').innerText = stats.verified || 0;
+      document.getElementById('stat-not-verified').innerText = stats.not_verified || 0;
+      document.getElementById('stat-pending').innerText = (stats.pending || 0) + (stats.processing || 0);
+      document.getElementById('stat-failed').innerText = stats.failed || 0;
+      document.getElementById('stat-reports').innerText = stats.reports_downloaded || 0;
+      document.getElementById('stat-percentage').innerText = (stats.percentage || 0) + '%';
+
+      // Update progress bar
+      const pBar = document.getElementById('progressBar');
+      pBar.style.width = (stats.percentage || 0) + '%';
+      document.getElementById('progressRatio').innerText = `${stats.processed || 0} / ${stats.total || 0}`;
+
+      // Stage and message
+      const st = data.state || {};
+      document.getElementById('stageBadge').innerText = st.stage || 'Idle';
+      document.getElementById('stageMessage').innerText = st.message || 'Ready';
+
+      // Controls button state
+      document.getElementById('btnStart').disabled = data.is_running || !currentJobId;
+      document.getElementById('btnPause').disabled = !data.is_running || data.is_paused;
+      document.getElementById('btnResume').disabled = !data.is_paused;
+      document.getElementById('btnStop').disabled = !data.is_running;
+
+      // Stream logs into terminal
+      if (data.recent_logs && data.recent_logs.length > 0) {
+        const term = document.getElementById('terminalBody');
+        term.innerHTML = data.recent_logs.map(line => {
+          let color = 'text-slate-300';
+          if (line.includes('[ERROR]')) color = 'text-rose-400 font-bold';
+          if (line.includes('[WARN]')) color = 'text-amber-400';
+          if (line.includes('[INFO]')) color = 'text-emerald-300';
+          return `<div class="${color}">${escapeHtml(line)}</div>`;
+        }).join('');
+        term.scrollTop = term.scrollHeight;
+      }
+    }
+
+    // --- OPERATIONS ACTIONS ---
+    async function startVerification() {
+      if (!currentJobId) return alert('Please upload an Excel file first.');
+      const dryRun = document.getElementById('chkDryRun').checked;
+      const headless = document.getElementById('chkHeadless').checked;
+      try {
+        const res = await fetch(`/api/jobs/${currentJobId}/start?dry_run=${dryRun}&headless=${headless}`, { method: 'POST' });
+        const json = await res.json();
+        if (!res.ok) alert(json.detail || 'Failed to start');
+      } catch (e) {
+        alert('Error: ' + e);
+      }
+    }
+
+    async function pauseVerification() {
+      if (!currentJobId) return;
+      await fetch(`/api/jobs/${currentJobId}/pause`, { method: 'POST' });
+    }
+
+    async function resumeVerification() {
+      if (!currentJobId) return;
+      await fetch(`/api/jobs/${currentJobId}/resume`, { method: 'POST' });
+    }
+
+    async function stopVerification() {
+      if (!currentJobId) return;
+      await fetch(`/api/jobs/${currentJobId}/stop`, { method: 'POST' });
+    }
+
+    function downloadOutputExcel() {
+      if (!currentJobId) return alert('No active job to export.');
+      window.location.href = `/api/jobs/${currentJobId}/export`;
+    }
+
+    // --- RECORDS TABLE ---
+    let searchTimeout = null;
+    function debounceLoadRecords() {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(loadRecords, 300);
+    }
+
+    async function loadRecords() {
+      if (!currentJobId) return;
+      const status = document.getElementById('statusFilter').value;
+      const search = document.getElementById('recordSearch').value;
+      try {
+        const res = await fetch(`/api/jobs/${currentJobId}/records?status=${encodeURIComponent(status)}&search=${encodeURIComponent(search)}`);
+        const data = await res.json();
+        const tbody = document.getElementById('recordsTbody');
+        if (!data.records || data.records.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="8" class="text-center py-6 text-slate-400">No records found.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = data.records.map(r => `
+          <tr class="hover:bg-slate-50 transition">
+            <td class="px-4 py-3 font-semibold text-slate-600">${r.row_index}</td>
+            <td class="px-4 py-3 text-slate-900">${escapeHtml(r.gsm_id)}</td>
+            <td class="px-4 py-3 text-slate-600">${escapeHtml(r.phone_number)}</td>
+            <td class="px-4 py-3 text-slate-700 font-bold">${escapeHtml(r.dl_number_masked)}</td>
+            <td class="px-4 py-3">${formatStatusBadge(r.verification_status)}</td>
+            <td class="px-4 py-3 text-slate-500">${escapeHtml(r.processing_status)}</td>
+            <td class="px-4 py-3">${r.report_filename ? `<a href="/api/reports/download/${r.report_filename}" class="text-blue-600 hover:underline">📄 Download</a>` : '<span class="text-slate-400">-</span>'}</td>
+            <td class="px-4 py-3 text-slate-500 font-sans text-[11px]">${escapeHtml(r.verification_remarks || '')}</td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        console.error('Failed to load records:', e);
+      }
+    }
+
+    function formatStatusBadge(status) {
+      let color = 'bg-slate-100 text-slate-700 border-slate-200';
+      if (status === 'Verified') color = 'bg-emerald-50 text-emerald-700 border-emerald-200';
+      if (status === 'Not Verified') color = 'bg-amber-50 text-amber-700 border-amber-200';
+      if (status === 'Invalid Details' || status === 'Verification Error') color = 'bg-rose-50 text-rose-700 border-rose-200';
+      return `<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold border ${color}">${escapeHtml(status || 'Pending')}</span>`;
+    }
+
+    // --- EXCEL UPLOAD ---
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('excelFileInput');
+
+    dropZone.onclick = () => fileInput.click();
+    dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('border-blue-500', 'bg-blue-50'); };
+    dropZone.ondragleave = () => { dropZone.classList.remove('border-blue-500', 'bg-blue-50'); };
+    dropZone.ondrop = (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('border-blue-500', 'bg-blue-50');
+      if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+    };
+
+    function handleFileSelected(event) {
+      if (event.target.files.length) uploadFile(event.target.files[0]);
+    }
+
+    async function uploadFile(file) {
+      const statusMsg = document.getElementById('uploadStatusMsg');
+      statusMsg.className = 'mt-4 p-3 rounded-lg text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 block';
+      statusMsg.innerText = `Uploading and parsing ${file.name}...`;
+
+      try {
+        // Read file as base64 for universal compatibility
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const base64Data = reader.result.split(',')[1];
+          const res = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: file.name, content_base64: base64Data })
+          });
+          const json = await res.json();
+          if (res.ok) {
+            statusMsg.className = 'mt-4 p-3 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 block';
+            statusMsg.innerText = `Uploaded successfully! Loaded ${json.summary.total_records} drivers (${json.summary.valid_records} valid).`;
+            currentJobId = json.job_id;
+            renderPreview(json.preview);
+          } else {
+            statusMsg.className = 'mt-4 p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200 block';
+            statusMsg.innerText = 'Upload Error: ' + (json.detail || 'Unknown error');
+          }
+        };
+        reader.readAsDataURL(file);
+      } catch (err) {
+        statusMsg.className = 'mt-4 p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200 block';
+        statusMsg.innerText = 'Error reading file: ' + err;
+      }
+    }
+
+    function renderPreview(records) {
+      document.getElementById('previewCard').classList.remove('hidden');
+      const tbody = document.getElementById('previewTbody');
+      tbody.innerHTML = records.map(r => `
+        <tr class="hover:bg-slate-50">
+          <td class="px-4 py-2 font-semibold text-slate-600">${r.row_index}</td>
+          <td class="px-4 py-2 text-slate-900">${escapeHtml(r.gsm_id)}</td>
+          <td class="px-4 py-2 text-slate-600">${escapeHtml(r.phone_number)}</td>
+          <td class="px-4 py-2 text-slate-700 font-bold">${escapeHtml(r.dl_number_masked)}</td>
+          <td class="px-4 py-2 text-slate-500">${escapeHtml(r.dob_masked)}</td>
+          <td class="px-4 py-2">${r.is_valid ? '<span class="text-emerald-600 font-bold">✓ Valid</span>' : '<span class="text-rose-600 font-bold">✗ Invalid</span>'}</td>
+          <td class="px-4 py-2 text-slate-500 font-sans text-[11px]">${escapeHtml(r.remarks || '')}</td>
+        </tr>
+      `).join('');
+    }
+
+    // --- BROWSER REMOTE VIEW & CONTROL ---
+    async function launchBrowser() {
+      try {
+        const res = await fetch('/api/browser/launch', { method: 'POST' });
+        const json = await res.json();
+        alert(json.message);
+        setTimeout(refreshScreenshot, 2000);
+      } catch (e) {
+        alert('Error: ' + e);
+      }
+    }
+
+    function refreshScreenshot() {
+      const img = document.getElementById('browserScreenshot');
+      img.src = '/api/browser/screenshot?t=' + Date.now();
+    }
+
+    async function closeBrowser() {
+      await fetch('/api/browser/close', { method: 'POST' });
+      refreshScreenshot();
+    }
+
+    async function submitRemoteLogin() {
+      const u = document.getElementById('remUsername').value;
+      const p = document.getElementById('remPassword').value;
+      if (!u || !p) return alert('Enter email and password.');
+      const res = await fetch('/api/browser/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: u, password: p })
+      });
+      const json = await res.json();
+      alert(json.message);
+      setTimeout(refreshScreenshot, 2000);
+    }
+
+    async function submitRemoteOtp() {
+      const otp = document.getElementById('remOtp').value;
+      if (!otp) return alert('Enter OTP.');
+      const res = await fetch('/api/browser/otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ otp: otp })
+      });
+      const json = await res.json();
+      alert(json.message);
+      setTimeout(refreshScreenshot, 2000);
+    }
+
+    async function navigateDLService() {
+      const res = await fetch('/api/browser/navigate?url=' + encodeURIComponent('https://console.surepass.app/services/driving-license'), { method: 'POST' });
+      const json = await res.json();
+      alert(json.message);
+      setTimeout(refreshScreenshot, 2000);
+    }
+
+    // --- REPORTS HUB ---
+    async function loadReports() {
+      try {
+        const res = await fetch('/api/reports');
+        const data = await res.json();
+        const grid = document.getElementById('reportsGrid');
+        if (!data.reports || data.reports.length === 0) {
+          grid.innerHTML = '<div class="p-8 text-center text-slate-400 col-span-3">No PDF reports downloaded yet.</div>';
+          return;
+        }
+        grid.innerHTML = data.reports.map(r => `
+          <div class="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col justify-between hover:shadow-md transition">
+            <div class="space-y-1">
+              <div class="flex items-center space-x-2">
+                <i data-lucide="file-text" class="w-5 h-5 text-indigo-600"></i>
+                <span class="text-xs font-bold text-slate-900 truncate">${escapeHtml(r.filename)}</span>
+              </div>
+              <p class="text-[11px] text-slate-500 font-mono">${(r.size_bytes / 1024).toFixed(1)} KB • ${r.page_count} page(s)</p>
+            </div>
+            <div class="mt-4 pt-3 border-t border-slate-200 flex items-center justify-between">
+              <span class="text-[11px] font-semibold text-emerald-600">✓ Valid Structure</span>
+              <a href="/api/reports/download/${r.filename}" download class="text-xs text-blue-600 hover:underline font-semibold">
+                Download PDF &darr;
+              </a>
+            </div>
+          </div>
+        `).join('');
+        lucide.createIcons();
+      } catch (e) {
+        console.error('Error loading reports:', e);
+      }
+    }
+
+    function clearTerminalLogs() {
+      document.getElementById('terminalBody').innerHTML = '<div class="text-slate-500">Terminal cleared.</div>';
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+    }
+
+    // Initialize
+    window.onload = () => {
+      lucide.createIcons();
+      connectWebSocket();
+    };
+  </script>
+</body>
+</html>

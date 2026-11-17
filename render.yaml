@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: dlaadhar-automation
+    env: docker
+    dockerfilePath: Dockerfile
+    plan: starter
+    region: oregon
+    healthCheckPath: /api/jobs
+    envVars:
+      - key: PORT
+        value: 10000

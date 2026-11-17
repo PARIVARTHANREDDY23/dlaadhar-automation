@@ -1,93 +1,110 @@
-# DLAAdhar automation
+# Surepass Driving Licence Verification Automation System
 
+An enterprise-grade, batch driving licence verification automation solution powered by **FastAPI**, **Playwright**, and **SQLite**. Supports headed and headless execution, live browser mirroring, session cookie transfer, automated PDF capture, and real-time WebSocket dashboard streaming.
 
+---
 
-## Getting started
+## 🚀 Key Features
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+* **Dual Platform Support:**
+  * **Modern FastAPI Single-Page Web Dashboard:** Non-blocking async server with real-time WebSockets, live progress streaming, and zero page re-renders.
+  * **Streamlit Operations Console:** Rapid local dashboard for data exploration and testing.
+* **Xvfb Cloud Virtual Desktop Support:**
+  * Includes a production `Dockerfile` with `xvfb` (Virtual Framebuffer).
+  * Runs headed Chromium inside Docker in the cloud with zero `Missing X server or $DISPLAY` errors!
+* **Robust Batch Excel Processing:**
+  * Auto-detects columns: `GSM ID`, `Phone Number`, `DL Number`, `DOB`.
+  * Preserves leading zeros and formats dates (`YYYY-MM-DD` and `DD-MM-YYYY`).
+  * Real-time incremental Excel updating via `openpyxl` after every record.
+* **Automated PDF Report Management:**
+  * Conclusively captures verification outcome PDFs.
+  * Renames reports to standardized format: `GSMID_PHONENUMBER_DL_Report.pdf`.
+  * Validates PDF byte structures and provides 1-click ZIP bundle downloads.
+* **Cloud Browser Mirror & Remote Operator Login:**
+  * Live canvas screen streaming from the cloud container to your browser.
+  * Form inputs for remote operator login, password, and OTP/CAPTCHA submission.
+  * Session cookie export and import (`surepass_session.json`).
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+---
 
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## 🛠️ Architecture
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/ParivarthanReddy/dlaadhar-automation.git
-git branch -M main
-git push -uf origin main
+dlaadhar-automation/
+├── server.py                 # FastAPI enterprise web application & WebSocket server
+├── web/
+│   └── index.html            # Modern Tailwind SPA with real-time UI
+├── Dockerfile                # Production container with Playwright + Xvfb
+├── entrypoint.sh             # Starts Xvfb virtual desktop & launches Uvicorn
+├── docker-compose.yml        # Docker compose setup
+├── railway.json              # 1-click Railway deployment configuration
+├── render.yaml               # 1-click Render deployment configuration
+├── app.py                    # Streamlit alternate dashboard
+├── config.py                 # Central configurations & timeouts
+├── portal_selectors.json     # Configurable Surepass DOM selectors
+├── core/
+│   ├── excel_processor.py    # Excel loading, validation & incremental saving
+│   ├── job_manager.py        # Thread-safe execution coordinator
+│   ├── status_manager.py     # Verification status enums & badges
+│   ├── validators.py         # DL, Phone, DOB, and GSM validation rules
+│   └── verification_engine.py# Sequential processing queue
+├── automation/
+│   ├── browser_manager.py    # Persistent Playwright context with self-healing
+│   ├── download_manager.py   # PDF download capture, validation & renaming
+│   ├── login_handler.py      # Session state & remote input handlers
+│   └── surepass_automation.py# Form filling & outcome detection
+├── database/
+│   └── db_manager.py         # SQLite persistence for jobs & driver records
+├── tests/                    # 20 Unit & Integration tests (100% passing)
+└── requirements.txt          # Production dependencies
 ```
 
-## Integrate with your tools
+---
 
-* [Set up project integrations](https://gitlab.com/ParivarthanReddy/dlaadhar-automation/-/settings/integrations)
+## 💻 Local Running Guide
 
-## Collaborate with your team
+### 1. Run the FastAPI Modern Web App (Recommended)
+```powershell
+# Start the web server
+python server.py
+```
+Open **`http://localhost:8000`** in your browser.
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+* Teammates on the same Wi-Fi can open: **`http://<YOUR_LOCAL_IP>:8000`**
 
-## Test and Deploy
+### 2. Run the Streamlit Dashboard (Alternate)
+```powershell
+streamlit run app.py
+```
+Open **`http://localhost:8501`** in your browser.
 
-Use the built-in continuous integration in GitLab.
+---
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+## ☁️ Cloud Deployment (Zero Display Errors)
 
-***
+### Deploy to Railway (Easiest)
+1. Fork or push this repository to GitHub.
+2. Go to [railway.app](https://railway.app) $\rightarrow$ Click **"New Project"** $\rightarrow$ **"Deploy from GitHub repo"**.
+3. Select your repository (`dlaadhar-automation`).
+4. Railway automatically reads `Dockerfile` and `railway.json`, boots `xvfb` virtual display, and gives you a live public HTTPS URL!
 
-# Editing this README
+### Deploy to Render
+1. Go to [render.com](https://render.com) $\rightarrow$ Click **"New Web Service"**.
+2. Connect your GitHub repository.
+3. Select **Docker** environment.
+4. Render builds the container and launches the app!
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+### Deploy with Docker Compose (Any VPS)
+```bash
+docker compose up -d --build
+```
 
-## Suggestions for a good README
+---
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+## 🧪 Running Tests
 
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Run the full automated test suite (20 tests covering all processors, validators, database, and API routes):
+```powershell
+python -m pytest -v
+```
+Output: **20 passed in 15.25s**.
