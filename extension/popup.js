@@ -203,7 +203,7 @@ async function runAutomationLoop() {
 
     // 5. Submit result back to central server (updates SQLite DB & Excel)
     try {
-      await fetch(`${backend}/api/extension/submit_result`, {
+      const subRes = await fetch(`${backend}/api/extension/submit_result`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -213,7 +213,25 @@ async function runAutomationLoop() {
           report_filename: reportFilename
         })
       });
+      const subJson = await subRes.json();
       log(`✓ Synced Row ${driverData.row_index} to central dashboard!`, "info");
+
+      // Auto-download local copy for colleague into Downloads/Surepass_DL_Reports
+      const downloadUrl = subJson.download_url ? `${backend}${subJson.download_url}` : `${backend}/api/reports/download/${subJson.report_filename || reportFilename}`;
+      const finalPdfName = subJson.report_filename || reportFilename;
+
+      chrome.runtime.sendMessage({
+        action: "DOWNLOAD_REPORT",
+        url: downloadUrl,
+        filename: finalPdfName,
+        subfolder: "Surepass_DL_Reports"
+      }, (res) => {
+        if (chrome.runtime.lastError) {
+          console.warn("Auto-download notice:", chrome.runtime.lastError.message);
+        } else if (res && res.success) {
+          log(`📥 Saved doc: Downloads/${res.path}`, "info");
+        }
+      });
     } catch (err) {
       log(`Failed syncing result to server: ${err.message}`, "err");
     }
@@ -268,4 +286,27 @@ document.addEventListener("DOMContentLoaded", async () => {
     isAutomating = false;
     log("Stopping after current record...", "warn");
   });
+
+  const linkDash = document.getElementById("linkDashboard");
+  if (linkDash) {
+    linkDash.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const b = await getBackendUrl();
+      chrome.tabs.create({ url: b });
+    });
+  }
+
+  const linkZip = document.getElementById("linkDownloadZip");
+  if (linkZip) {
+    linkZip.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const b = await getBackendUrl();
+      chrome.downloads.download({
+        url: `${b}/api/reports/zip`,
+        filename: `Surepass_DL_Reports/All_Verification_Reports_${Date.now()}.zip`,
+        saveAs: false
+      });
+      log("📥 Downloading all documents ZIP to Downloads/Surepass_DL_Reports/...", "info");
+    });
+  }
 });

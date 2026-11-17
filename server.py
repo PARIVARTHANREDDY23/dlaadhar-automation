@@ -508,6 +508,8 @@ async def extension_submit_result(request: Request):
     if not record_id:
         raise HTTPException(status_code=400, detail="Missing record_id.")
 
+    now_iso = time.strftime("%Y-%m-%d %H:%M:%S")
+
     # Save PDF if provided, or auto-generate official certificate
     rep_path = None
     rep_download_status = "Not Available"
@@ -521,7 +523,7 @@ async def extension_submit_result(request: Request):
             rep_download_status = "Downloaded"
         except Exception as e:
             logger.warning(f"Could not save extension uploaded report: {e}")
-    elif v_status in ["Verified", "Not Verified"]:
+    elif v_status in ["Verified", "Not Verified", "Invalid Details"]:
         try:
             from utils.file_manager import create_driver_pdf_report
             with db_manager.get_connection() as conn:
@@ -542,8 +544,6 @@ async def extension_submit_result(request: Request):
                     rep_download_status = "Downloaded"
         except Exception as e:
             logger.warning(f"Could not auto-generate verification PDF certificate: {e}")
-
-    now_iso = time.strftime("%Y-%m-%d %H:%M:%S")
 
     # Update SQLite Record
     db_manager.update_record_status(
@@ -596,7 +596,13 @@ async def extension_submit_result(request: Request):
                 "message": "All drivers verified successfully!"
             })
 
-    return {"success": True, "message": f"Record {record_id} updated to {v_status}."}
+    return {
+        "success": True,
+        "message": f"Record {record_id} updated to {v_status}.",
+        "report_filename": rep_filename,
+        "report_download_status": rep_download_status,
+        "download_url": f"/api/reports/download/{rep_filename}" if rep_filename and rep_download_status == "Downloaded" else None
+    }
 
 
 @app.get("/api/extension/download-zip")

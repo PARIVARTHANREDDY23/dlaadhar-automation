@@ -425,13 +425,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       </div>
 
       <!-- ACTION BUTTONS -->
-      <div style="display:flex; gap:6px; margin-bottom:8px;">
+      <div style="display:flex; gap:6px; margin-bottom:6px;">
         <button id="sbBtnStart" style="flex:1; background:#2563EB; color:#fff; border:none; border-radius:6px; padding:7px; font-weight:700; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:4px;">
           <span>▶️ Start Auto-Verify</span>
         </button>
         <button id="sbBtnStop" disabled style="background:#E11D48; color:#fff; border:none; border-radius:6px; padding:7px 10px; font-weight:700; font-size:12px; cursor:not-allowed; opacity:0.5;">
           <span>⏹️ Stop</span>
         </button>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:10px;">
+        <span style="color:#64748B;">Auto-saving to: <b style="color:#2563EB;">Surepass_DL_Reports/</b></span>
+        <button id="sbBtnZip" style="background:#ECFDF5; border:1px solid #A7F3D0; color:#047857; font-weight:700; font-size:10px; padding:3px 6px; border-radius:5px; cursor:pointer;">📦 All Docs (ZIP)</button>
       </div>
 
       <!-- TERMINAL LOG -->
@@ -588,7 +592,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       // 4. Submit Result back to server
       try {
-        await fetch(`${backend}/api/extension/submit_result`, {
+        const subRes = await fetch(`${backend}/api/extension/submit_result`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -598,7 +602,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             report_filename: reportFilename
           })
         });
+        const subJson = await subRes.json();
         sbLog(`✓ Synced Row ${driverData.row_index} to dashboard!`, "info");
+
+        // 5. Auto-Download Report PDF directly into colleague's local folder
+        const downloadUrl = subJson.download_url ? `${backend}${subJson.download_url}` : `${backend}/api/reports/download/${subJson.report_filename || reportFilename}`;
+        const finalPdfName = subJson.report_filename || reportFilename;
+
+        chrome.runtime.sendMessage({
+          action: "DOWNLOAD_REPORT",
+          url: downloadUrl,
+          filename: finalPdfName,
+          subfolder: "Surepass_DL_Reports"
+        }, (res) => {
+          if (chrome.runtime.lastError) {
+            console.warn("Auto-download notice:", chrome.runtime.lastError.message);
+          } else if (res && res.success) {
+            sbLog(`📥 Saved doc: Downloads/${res.path}`, "info");
+          }
+        });
       } catch (sErr) {
         sbLog(`Submit error: ${sErr.message}`, "err");
       }
@@ -645,6 +667,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       btnStop.onclick = () => {
         inPageAutomating = false;
         sbLog("Stopping after current record...", "warn");
+      };
+    }
+
+    const btnZip = document.getElementById("sbBtnZip");
+    if (btnZip) {
+      btnZip.onclick = async () => {
+        const b = await getSavedBackend();
+        chrome.runtime.sendMessage({
+          action: "DOWNLOAD_REPORT",
+          url: `${b}/api/reports/zip`,
+          filename: `All_Verification_Reports_${Date.now()}.zip`,
+          subfolder: "Surepass_DL_Reports"
+        }, (res) => {
+          if (chrome.runtime.lastError) {
+            sbLog("ZIP download error: " + chrome.runtime.lastError.message, "err");
+          } else {
+            sbLog("📦 Downloading all docs ZIP to Downloads/Surepass_DL_Reports/...", "info");
+          }
+        });
       };
     }
   }, 400);
