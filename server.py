@@ -64,11 +64,11 @@ async def serve_index():
     return HTMLResponse("<h2>DL Verification Web UI is loading...</h2>")
 
 
-@app.post("/api/upload")
-async def upload_excel(request: Request):
+@app.post("/api/upload/inspect")
+async def inspect_uploaded_excel(request: Request):
     """
-    Accepts driver Excel sheet via multipart form, raw binary body, or JSON base64.
-    Validates mandatory columns, formats dates, creates DB records, and returns preview.
+    Step 1: Uploads file temporarily and extracts sheet headers/columns
+    so the operator can verify and choose column mapping before processing.
     """
     content_type = request.headers.get("content-type", "")
     filename = "driver_upload.xlsx"
@@ -95,17 +95,125 @@ async def upload_excel(request: Request):
         if not file_bytes:
             raise HTTPException(status_code=400, detail="Empty file payload received.")
 
-        # Save to input folder
+        # Save to input folder with unique prefix
+        file_id = f"upload_{int(time.time())}_{Path(filename).name}"
+        dest_path = INPUT_DIR / file_id
+        with open(dest_path, "wb") as f:
+            f.write(file_bytes)
+
+        # Inspect headers
+        proc = ExcelProcessor(str(dest_path))
+        columns, row_count = proc.load_and_inspect()
+        auto_mapping = proc.auto_detect_mapping(columns)
+
+        return {
+            "success": True,
+            "file_id": file_id,
+            "filename": filename,
+            "columns": columns,
+            "auto_mapping": auto_mapping,
+            "total_rows": row_count
+        }
+
+    except Exception as e:
+        logger.error(f"Error inspecting upload: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/upload/confirm")
+async def confirm_upload_mapping(request: Request):
+    """
+    Step 2: Receives the user-selected column mappings, initializes the verification job,
+    validates the driver rows, and returns the preview.
+    """
+    try:
+        body = await request.json()
+        file_id = body.get("file_id")
+        if not file_id:
+            raise HTTPException(status_code=400, detail="Missing file_id.")
+
+        dest_path = INPUT_DIR / file_id
+        if not dest_path.exists():
+            raise HTTPException(status_code=404, detail="Uploaded file not found.")
+
+        column_mapping = body.get("column_mapping") or DEFAULT_COLUMN_MAPPING
+
+        # Initialize job with operator's chosen mapping
+        job_id, records, summary = job_mgr.initialize_new_job(str(dest_path), column_mapping)
+
+        # Return preview with masked data
+        preview_records = []
+        for r in records[:50]:
+            preview_records.append({
+                "row_index": r["row_index"],
+                "gsm_id": r["gsm_id"],
+                "phone_number": r["phone_number"],
+                "dl_number_masked": r["dl_number_masked"],
+                "dob_masked": r["dob_masked"],
+                "is_valid": r["is_valid"],
+                "remarks": r["verification_remarks"]
+            })
+
+        return {
+            "success": True,
+            "job_id": job_id,
+            "filename": file_id,
+            "summary": summary,
+            "preview": preview_records
+        }
+
+    except Exception as e:
+        logger.error(f"Error confirming mapping: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/upload")
+async def upload_excel(request: Request):
+    """
+    Direct single-step upload fallback with auto-mapping.
+    """
+    content_type = request.headers.get("content-type", "")
+    filename = "driver_upload.xlsx"
+    file_bytes = b""
+    column_mapping = None
+
+    try:
+        if "application/json" in content_type:
+            payload = await request.json()
+            filename = payload.get("filename", "drivers.xlsx")
+            content_b64 = payload.get("content_base64", "")
+            file_bytes = base64.b64decode(content_b64)
+            column_mapping = payload.get("column_mapping")
+        elif "multipart/form-data" in content_type:
+            form = await request.form()
+            file_field = form.get("file")
+            if hasattr(file_field, "filename") and hasattr(file_field, "read"):
+                filename = file_field.filename
+                file_bytes = await file_field.read()
+            else:
+                file_bytes = await request.body()
+        else:
+            filename = request.query_params.get("filename", "drivers.xlsx")
+            file_bytes = await request.body()
+
+        if not file_bytes:
+            raise HTTPException(status_code=400, detail="Empty file payload received.")
+
         dest_path = INPUT_DIR / filename
         with open(dest_path, "wb") as f:
             f.write(file_bytes)
 
-        # Initialize job
-        job_id, records, summary = job_mgr.initialize_new_job(str(dest_path), DEFAULT_COLUMN_MAPPING)
+        # Auto-detect mapping if not supplied
+        if not column_mapping:
+            proc = ExcelProcessor(str(dest_path))
+            cols, _ = proc.load_and_inspect()
+            column_mapping = proc.auto_detect_mapping(cols)
 
-        # Return preview with masked data
+        # Initialize job
+        job_id, records, summary = job_mgr.initialize_new_job(str(dest_path), column_mapping)
+
         preview_records = []
-        for r in records[:50]:  # First 50 records for preview
+        for r in records[:50]:
             preview_records.append({
                 "row_index": r["row_index"],
                 "gsm_id": r["gsm_id"],

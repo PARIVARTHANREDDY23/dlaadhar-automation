@@ -67,19 +67,19 @@ class ExcelProcessor:
             mapping["gsm_id"] = available_columns[0]
 
         # Match Phone Number
-        for candidate in ["phone number", "phone", "phonenumber", "mobile", "mobile number", "contact"]:
+        for candidate in ["phone number", "phone", "phonenumber", "mobile", "mobile number", "contact", "contact number", "mobile no", "contact no", "phone no", "mobile_no", "phone_no", "ph", "ph_no"]:
             if candidate in col_lower:
                 mapping["phone_number"] = col_lower[candidate]
                 break
 
         # Match DL Number
-        for candidate in ["dl number", "dl_number", "dlnumber", "driving licence", "driving license", "dl no", "licence no"]:
+        for candidate in ["dl number", "dl_number", "dlnumber", "driving licence", "driving license", "dl no", "licence no", "license no", "dl", "dl_no", "license", "licence", "dl_num", "driving_licence", "driving_license", "dl #"]:
             if candidate in col_lower:
                 mapping["dl_number"] = col_lower[candidate]
                 break
 
         # Match DOB
-        for candidate in ["dob", "date of birth", "date_of_birth", "birth date", "driver dob"]:
+        for candidate in ["dob", "date of birth", "date_of_birth", "birth date", "driver dob", "d.o.b", "d_o_b", "birth_date", "birthdate", "driver_dob"]:
             if candidate in col_lower:
                 mapping["dob"] = col_lower[candidate]
                 break
