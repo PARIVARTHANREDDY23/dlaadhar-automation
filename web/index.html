@@ -29,12 +29,15 @@
         </div>
       </div>
 
-      <div class="flex items-center space-x-4">
+      <div class="flex items-center space-x-3">
         <div id="wsStatusBadge" class="flex items-center space-x-2 text-xs font-semibold px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
           <span class="w-2 h-2 rounded-full bg-emerald-500 live-pulse"></span>
           <span id="wsStatusText">Connected</span>
         </div>
-        <span id="currentJobBadge" class="text-xs font-mono bg-slate-100 text-slate-600 px-2.5 py-1 rounded border border-slate-200">
+        <select id="jobHistorySelect" onchange="switchJob(this.value)" class="text-xs bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded px-2 py-1 text-slate-700 font-mono focus:ring-2 focus:ring-blue-500">
+          <option value="">Job History (All Batches)</option>
+        </select>
+        <span id="currentJobBadge" class="text-xs font-mono bg-blue-50 text-blue-700 px-2.5 py-1 rounded border border-blue-200 font-bold">
           No Active Job
         </span>
       </div>
@@ -818,6 +821,42 @@
       return String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
     }
 
+    async function loadJobHistory() {
+      try {
+        const res = await fetch('/api/jobs');
+        const data = await res.json();
+        const select = document.getElementById('jobHistorySelect');
+        if (data.jobs && data.jobs.length > 0) {
+          select.innerHTML = '<option value="">Switch Batch History ▼</option>' + data.jobs.map(j => {
+            const isSel = (j.job_id === currentJobId) ? 'selected' : '';
+            return `<option value="${j.job_id}" ${isSel}>${j.job_id} • ${escapeHtml(j.input_filename)} (${j.total_records} rows)</option>`;
+          }).join('');
+        }
+      } catch (e) {
+        console.error('Error loading job history:', e);
+      }
+    }
+
+    async function switchJob(jobId) {
+      if (!jobId) return;
+      currentJobId = jobId;
+      document.getElementById('currentJobBadge').innerText = 'Job: ' + currentJobId;
+      loadRecords();
+      try {
+        const res = await fetch(`/api/jobs/${currentJobId}`);
+        const data = await res.json();
+        updateDashboardState({
+          job_id: currentJobId,
+          statistics: data.statistics,
+          state: { stage: data.job.status, message: `Loaded job ${data.job.input_filename}` },
+          is_running: false,
+          is_paused: false
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
     // Initialize
     window.onload = async () => {
       lucide.createIcons();
@@ -830,6 +869,7 @@
           document.getElementById('currentJobBadge').innerText = 'Job: ' + currentJobId;
           loadRecords();
         }
+        loadJobHistory();
       } catch (e) {
         console.error('Error fetching latest job:', e);
       }
