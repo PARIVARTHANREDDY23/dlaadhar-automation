@@ -635,7 +635,8 @@ async def download_report(filename: str):
     return FileResponse(
         path=str(report_path),
         filename=filename,
-        media_type="application/pdf"
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
 
@@ -648,7 +649,8 @@ async def download_all_reports_zip():
     return FileResponse(
         path=str(zip_path),
         filename=zip_path.name,
-        media_type="application/zip"
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_path.name}"'}
     )
 
 
