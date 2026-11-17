@@ -395,51 +395,99 @@ async def extension_next_driver():
     if not current_job:
         raise HTTPException(status_code=404, detail="No active batch found.")
 
+    # 1. Auto-recover orphaned processing records older than 4 minutes
+    try:
+        with db_manager.get_connection() as conn:
+            conn.cursor().execute("""
+                UPDATE job_records 
+                SET processing_status = 'Pending'
+                WHERE job_id = ? AND processing_status = 'Processing'
+                AND start_timestamp IS NOT NULL
+                AND (strftime('%s', 'now') - strftime('%s', start_timestamp)) > 240
+            """, (current_job,))
+            conn.commit()
+    except Exception:
+        pass
+
+    # 2. Fetch pending records
     pending_records = db_manager.get_pending_records(current_job)
     if not pending_records:
         return {"has_driver": False, "message": "All drivers in batch have been verified!"}
 
-    rec = pending_records[0]
-    dl_val = rec.get("dl_number") or ""
-    dob_val = rec.get("dob") or ""
+    target_rec = None
+    target_dl = ""
+    target_dob = ""
 
-    # If unmasked DL or DOB is missing from DB record, backfill from original Excel
-    if not dl_val or not dob_val:
-        job = db_manager.get_job(current_job)
-        if job and job.get("input_file_path"):
-            try:
-                import pandas as pd
-                df_raw = pd.read_excel(job["input_file_path"])
-                idx = rec["row_index"] - 2
-                if 0 <= idx < len(df_raw):
-                    row = df_raw.iloc[idx]
-                    for col in df_raw.columns:
-                        c_lower = str(col).strip().lower()
-                        if not dl_val and c_lower in ["dl", "dl number", "dl_number", "driving licence", "driving license", "dl_no"]:
-                            dl_val = str(row[col]).strip() if pd.notna(row[col]) else ""
-                        if not dob_val and c_lower in ["dob", "date of birth", "birth date", "d.o.b"]:
-                            if pd.notna(row[col]):
-                                dob_val = str(row[col]).split(" ")[0].strip()
-                    
-                    if dl_val or dob_val:
-                        with db_manager.get_connection() as conn:
-                            conn.cursor().execute(
-                                "UPDATE job_records SET dl_number = ?, dob = ? WHERE id = ?",
-                                (dl_val, dob_val, rec["id"])
-                            )
-                            conn.commit()
-            except Exception as e:
-                logger.warning(f"Could not backfill driver info from Excel: {e}")
+    for rec in pending_records:
+        dl_val = rec.get("dl_number") or ""
+        dob_val = rec.get("dob") or ""
+
+        # Backfill unmasked DL/DOB from original Excel if missing
+        if not dl_val or not dob_val:
+            job = db_manager.get_job(current_job)
+            if job and job.get("input_file_path"):
+                try:
+                    import pandas as pd
+                    df_raw = pd.read_excel(job["input_file_path"])
+                    idx = rec["row_index"] - 2
+                    if 0 <= idx < len(df_raw):
+                        row = df_raw.iloc[idx]
+                        for col in df_raw.columns:
+                            c_lower = str(col).strip().lower()
+                            if not dl_val and c_lower in ["dl", "dl number", "dl_number", "driving licence", "driving license", "dl_no"]:
+                                dl_val = str(row[col]).strip() if pd.notna(row[col]) else ""
+                            if not dob_val and c_lower in ["dob", "date of birth", "birth date", "d.o.b"]:
+                                if pd.notna(row[col]):
+                                    dob_val = str(row[col]).split(" ")[0].strip()
+                        
+                        if dl_val or dob_val:
+                            with db_manager.get_connection() as conn:
+                                conn.cursor().execute(
+                                    "UPDATE job_records SET dl_number = ?, dob = ? WHERE id = ?",
+                                    (dl_val, dob_val, rec["id"])
+                                )
+                                conn.commit()
+                except Exception as e:
+                    logger.warning(f"Could not backfill driver info from Excel: {e}")
+
+        # If DL is completely missing in Excel, skip it gracefully
+        if not dl_val:
+            now_iso = time.strftime("%Y-%m-%d %H:%M:%S")
+            db_manager.update_record_status(
+                record_id=rec["id"],
+                processing_status="Completed",
+                verification_status="Invalid Details",
+                verification_remarks="Missing DL Number in Excel",
+                completion_timestamp=now_iso
+            )
+            continue
+
+        target_rec = rec
+        target_dl = dl_val
+        target_dob = dob_val
+        break
+
+    if not target_rec:
+        return {"has_driver": False, "message": "All drivers in batch have been verified!"}
+
+    # 3. Atomically mark as Processing to prevent collisions between multiple colleagues
+    now_iso = time.strftime("%Y-%m-%d %H:%M:%S")
+    with db_manager.get_connection() as conn:
+        conn.cursor().execute(
+            "UPDATE job_records SET processing_status = 'Processing', start_timestamp = ? WHERE id = ?",
+            (now_iso, target_rec["id"])
+        )
+        conn.commit()
 
     return {
         "has_driver": True,
         "job_id": current_job,
-        "record_id": rec["id"],
-        "row_index": rec["row_index"],
-        "gsm_id": rec.get("gsm_id", ""),
-        "phone_number": rec.get("phone_number", ""),
-        "dl_number": dl_val,
-        "dob": dob_val,
+        "record_id": target_rec["id"],
+        "row_index": target_rec["row_index"],
+        "gsm_id": target_rec.get("gsm_id", ""),
+        "phone_number": target_rec.get("phone_number", ""),
+        "dl_number": target_dl,
+        "dob": target_dob,
         "pending_count": len(pending_records)
     }
 
@@ -462,7 +510,7 @@ async def extension_submit_result(request: Request):
 
     # Save PDF if provided
     rep_path = None
-    rep_download_status = "Pending"
+    rep_download_status = "Not Available"
     if rep_filename and rep_b64:
         try:
             pdf_bytes = base64.b64decode(rep_b64)
@@ -509,7 +557,6 @@ async def extension_submit_result(request: Request):
                         report_download_status=rep_download_status,
                         processing_status="Completed"
                     )
-                    # Update live state for WebSocket dashboard
                     job_mgr.latest_state.update({
                         "stage": "Extension Verifying",
                         "message": f"Verified row {row_idx} ({r_info['gsm_id']}): {v_status}",
@@ -518,6 +565,15 @@ async def extension_submit_result(request: Request):
                         "current_row": row_idx,
                         "latest_status": v_status
                     })
+
+        # Check if batch is completely finished
+        pending_left = db_manager.get_pending_records(current_job)
+        if not pending_left:
+            db_manager.update_job_status(current_job, "Completed")
+            job_mgr.latest_state.update({
+                "stage": "Completed",
+                "message": "All drivers verified successfully!"
+            })
 
     return {"success": True, "message": f"Record {record_id} updated to {v_status}."}
 

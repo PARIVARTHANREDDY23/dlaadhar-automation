@@ -1,11 +1,11 @@
-// popup.js - Manages the extension loop and server synchronization
-
+// popup.js - Automation Runner & Central Sync Manager
 let isAutomating = false;
 let defaultBackendUrl = "http://192.168.100.193:8002";
 
 // Helper: Append log line
 function log(msg, type = "info") {
   const term = document.getElementById("termLog");
+  if (!term) return;
   const d = document.createElement("div");
   const time = new Date().toLocaleTimeString();
   if (type === "err") d.className = "log-err";
@@ -18,6 +18,24 @@ function log(msg, type = "info") {
 
 // Helper: Sleep
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Helper: Audio Chime on Completion
+function playCompletionChime() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+    osc.frequency.setValueAtTime(880, ctx.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.6);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.6);
+  } catch (e) {}
+}
 
 // Get configured backend URL
 async function getBackendUrl() {
@@ -59,7 +77,7 @@ async function checkServerStatus() {
   }
 }
 
-// Main Automation Loop
+// Main Automation Loop with Full Fallback Protection
 async function runAutomationLoop() {
   const backend = await getBackendUrl();
   isAutomating = true;
@@ -68,66 +86,87 @@ async function runAutomationLoop() {
   log("🚀 Starting batch verification loop...", "info");
 
   while (isAutomating) {
-    // 1. Locate Surepass tab
-    let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.url || !tab.url.includes("console.surepass.app")) {
-      const surepassTabs = await chrome.tabs.query({ url: "*://console.surepass.app/*" });
-      if (surepassTabs.length > 0) {
-        tab = surepassTabs[0];
-        try { chrome.tabs.update(tab.id, { active: true }); } catch (e) {}
-      } else {
-        log("⚠️ Please open https://console.surepass.app in a Chrome tab!", "warn");
+    // 1. Locate and Focus Surepass tab across all Chrome windows
+    let tab = null;
+    const allTabs = await chrome.tabs.query({});
+    const surepassTabs = allTabs.filter(t => t.url && t.url.includes("console.surepass.app"));
+
+    if (surepassTabs.length > 0) {
+      // Prioritize the Driving License service tab if open
+      const dlTabs = surepassTabs.filter(t => t.url.includes("driving-license"));
+      tab = dlTabs.length > 0 ? dlTabs[0] : surepassTabs[0];
+
+      // Check if logged out
+      if (tab.url.includes("/login") || tab.url.includes("/auth")) {
+        log("⚠️ Surepass session expired. Please log in on the Surepass tab!", "warn");
+        await sleep(4000);
+        continue;
+      }
+
+      try {
+        await chrome.tabs.update(tab.id, { active: true });
+        await chrome.windows.update(tab.windowId, { focused: true });
+      } catch (e) {}
+    } else {
+      log("⚠️ Opening Surepass Driving License tab in Chrome...", "warn");
+      try {
+        tab = await chrome.tabs.create({ url: "https://console.surepass.app/services/driving-license" });
+        await sleep(5000);
+      } catch (e) {
         await sleep(3000);
         continue;
       }
     }
 
-    // 2. Fetch next pending driver from central server
+    // 2. Fetch next pending driver from central server (with auto-retry)
     let driverData = null;
-    try {
-      const res = await fetch(`${backend}/api/extension/next_driver`, { cache: "no-store" });
-      if (!res.ok) throw new Error("Could not fetch next driver");
-      driverData = await res.json();
-    } catch (e) {
-      log(`Server communication error: ${e.message}`, "err");
-      await sleep(3000);
-      continue;
+    let fetchAttempts = 0;
+    while (fetchAttempts < 3 && isAutomating) {
+      try {
+        const res = await fetch(`${backend}/api/extension/next_driver`, { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        driverData = await res.json();
+        break;
+      } catch (e) {
+        fetchAttempts++;
+        if (fetchAttempts >= 3) {
+          log(`Server communication notice: ${e.message}. Retrying in 4s...`, "warn");
+          await sleep(4000);
+        } else {
+          await sleep(1000);
+        }
+      }
     }
+
+    if (!driverData) continue;
 
     if (!driverData.has_driver) {
       log("🎉 All drivers in queue have been verified!", "info");
+      playCompletionChime();
       isAutomating = false;
       break;
     }
 
     // 3. Update UI Card
-    document.getElementById("curGsmId").innerText = driverData.gsm_id;
-    document.getElementById("curDlNumber").innerText = driverData.dl_number.substring(0, 4) + "****" + driverData.dl_number.slice(-2);
-    document.getElementById("curPhone").innerText = driverData.phone_number;
+    const maskDl = (dl) => {
+      if (!dl || dl.length <= 6) return dl || "-";
+      return dl.substring(0, 4) + "****" + dl.slice(-2);
+    };
+
+    document.getElementById("curGsmId").innerText = driverData.gsm_id || "-";
+    document.getElementById("curDlNumber").innerText = maskDl(driverData.dl_number);
+    document.getElementById("curPhone").innerText = driverData.phone_number || "-";
     document.getElementById("curDob").innerText = driverData.dob || "-";
     document.getElementById("pendingCountBadge").innerText = `${driverData.pending_count} Pending`;
 
     log(`Processing Row ${driverData.row_index}: ${driverData.gsm_id} (DL: ${driverData.dl_number})`, "info");
 
-    // 4. Send command to Content Script in the open Surepass tab
+    // 4. Send command to Content Script (with automatic injection fallback)
     let result = null;
-    try {
-      result = await new Promise((resolve, reject) => {
-        chrome.tabs.sendMessage(tab.id, { action: "VERIFY_DRIVER", driver: driverData }, (response) => {
-          if (chrome.runtime.lastError) {
-            return reject(new Error(chrome.runtime.lastError.message));
-          }
-          resolve(response);
-        });
-      });
-    } catch (err) {
-      log("⚡ Auto-connecting script to Surepass tab...", "info");
+    let sendAttempts = 0;
+
+    while (sendAttempts < 2 && isAutomating) {
       try {
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          files: ["content.js"]
-        });
-        await sleep(800);
         result = await new Promise((resolve, reject) => {
           chrome.tabs.sendMessage(tab.id, { action: "VERIFY_DRIVER", driver: driverData }, (response) => {
             if (chrome.runtime.lastError) {
@@ -136,22 +175,34 @@ async function runAutomationLoop() {
             resolve(response);
           });
         });
-      } catch (retryErr) {
-        log(`Notice: Please refresh your Surepass page (press F5)!`, "warn");
-        await sleep(4000);
-        continue;
+        break;
+      } catch (err) {
+        sendAttempts++;
+        log("⚡ Auto-connecting automation engine to Surepass tab...", "info");
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ["content.js"]
+          });
+          await sleep(1000);
+        } catch (injectErr) {
+          log("Notice: Please refresh the Surepass page (F5) once!", "warn");
+          await sleep(3000);
+        }
       }
     }
 
+    if (!isAutomating) break;
+
     const finalStatus = (result && result.status) ? result.status : "Verification Error";
-    const remarks = (result && result.remarks) ? result.remarks : "Automated via Chrome Extension";
+    const remarks = (result && result.remarks) ? result.remarks : "Automated via Surepass Assistant";
     const reportFilename = (result && result.report_filename) ? result.report_filename : `${driverData.gsm_id}_${driverData.phone_number}_DL_Report.pdf`;
 
     log(`Outcome: ${finalStatus} (${remarks})`, finalStatus === "Verified" ? "info" : "warn");
 
-    // 5. Submit result back to central server (updates SQLite DB & Excel in real time!)
+    // 5. Submit result back to central server (updates SQLite DB & Excel)
     try {
-      const submitRes = await fetch(`${backend}/api/extension/submit_result`, {
+      await fetch(`${backend}/api/extension/submit_result`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -161,15 +212,13 @@ async function runAutomationLoop() {
           report_filename: reportFilename
         })
       });
-      if (submitRes.ok) {
-        log(`✓ Synced Row ${driverData.row_index} to central server!`, "info");
-      }
+      log(`✓ Synced Row ${driverData.row_index} to central dashboard!`, "info");
     } catch (err) {
       log(`Failed syncing result to server: ${err.message}`, "err");
     }
 
-    // Brief delay between successive records
-    await sleep(2500);
+    // Delay between successive records
+    await sleep(2000);
   }
 
   document.getElementById("btnStart").disabled = false;
@@ -181,32 +230,27 @@ async function runAutomationLoop() {
 // Event Listeners
 document.addEventListener("DOMContentLoaded", async () => {
   const backend = await getBackendUrl();
-  document.getElementById("backendUrl").value = backend;
-
-  document.getElementById("btnSaveConfig").onclick = async () => {
-    const url = document.getElementById("backendUrl").value.trim().replace(/\/$/, "");
-    chrome.storage.local.set({ backendUrl: url }, () => {
-      log(`Connected target updated to: ${url}`);
-      checkServerStatus();
-    });
-  };
-
-  document.getElementById("btnStart").onclick = () => {
-    if (!isAutomating) runAutomationLoop();
-  };
-
-  document.getElementById("btnStop").onclick = () => {
-    isAutomating = false;
-    log("Stopping after current record...", "warn");
-  };
-
-  document.getElementById("linkDashboard").onclick = async (e) => {
-    e.preventDefault();
-    const backend = await getBackendUrl();
-    chrome.tabs.create({ url: backend });
-  };
+  const input = document.getElementById("backendUrl");
+  if (input) input.value = backend;
 
   checkServerStatus();
   setInterval(checkServerStatus, 5000);
-});
 
+  document.getElementById("btnSaveConfig").addEventListener("click", () => {
+    const val = input.value.trim().replace(/\/+$/, "");
+    if (!val) return;
+    chrome.storage.local.set({ backendUrl: val }, () => {
+      log(`Backend updated to: ${val}`, "info");
+      checkServerStatus();
+    });
+  });
+
+  document.getElementById("btnStart").addEventListener("click", () => {
+    if (!isAutomating) runAutomationLoop();
+  });
+
+  document.getElementById("btnStop").addEventListener("click", () => {
+    isAutomating = false;
+    log("Stopping after current record...", "warn");
+  });
+});
