@@ -144,8 +144,8 @@
             <span>🧪 Dry Run Mode</span>
           </label>
           <label class="flex items-center space-x-2 text-xs font-medium text-slate-700 cursor-pointer">
-            <input type="checkbox" id="chkHeadless" checked class="rounded text-blue-600 focus:ring-blue-500 w-4 h-4">
-            <span>👁️ Headless Browser</span>
+            <input type="checkbox" id="chkHeadless" class="rounded text-blue-600 focus:ring-blue-500 w-4 h-4">
+            <span>👁️ Headless Browser (Background)</span>
           </label>
           <button onclick="downloadOutputExcel()" class="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-lg flex items-center space-x-2 shadow transition">
             <i data-lucide="download" class="w-4 h-4"></i>
@@ -511,7 +511,13 @@
       try {
         const res = await fetch(`/api/jobs/${currentJobId}/start?dry_run=${dryRun}&headless=${headless}`, { method: 'POST' });
         const json = await res.json();
-        if (!res.ok) alert(json.detail || 'Failed to start');
+        if (!res.ok) {
+          alert('Notice: ' + (json.detail || 'Failed to start'));
+        } else {
+          if (!dryRun && !headless) {
+            alert('🚀 Chrome browser launched! Please switch to the Chrome window to log into Surepass if prompted.');
+          }
+        }
       } catch (e) {
         alert('Error: ' + e);
       }
@@ -813,9 +819,20 @@
     }
 
     // Initialize
-    window.onload = () => {
+    window.onload = async () => {
       lucide.createIcons();
       connectWebSocket();
+      try {
+        const res = await fetch('/api/jobs');
+        const data = await res.json();
+        if (data.jobs && data.jobs.length > 0) {
+          currentJobId = data.jobs[0].job_id;
+          document.getElementById('currentJobBadge').innerText = 'Job: ' + currentJobId;
+          loadRecords();
+        }
+      } catch (e) {
+        console.error('Error fetching latest job:', e);
+      }
     };
   </script>
 </body>

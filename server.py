@@ -475,6 +475,12 @@ async def live_websocket_stream(websocket: WebSocket):
             is_running = job_mgr.is_running()
             is_paused = job_mgr.is_paused()
             current_job = job_mgr.current_job_id
+            if not current_job:
+                latest = db_manager.get_latest_job()
+                if latest:
+                    current_job = latest["job_id"]
+                    job_mgr.current_job_id = current_job
+
             stats = db_manager.get_job_statistics(current_job) if current_job else {}
             logs = get_recent_logs(max_lines=30)
 
