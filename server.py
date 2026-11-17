@@ -387,8 +387,35 @@ async def live_websocket_stream(websocket: WebSocket):
         logger.debug(f"WebSocket closed: {e}")
 
 
+def find_available_port(start_port: int = 8000, max_attempts: int = 30) -> int:
+    """Finds an available TCP port starting from start_port."""
+    import socket
+    for port in range(start_port, start_port + max_attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("0.0.0.0", port))
+                return port
+            except OSError:
+                continue
+    return start_port
+
+
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    print(f"Starting Surepass Verification API on http://0.0.0.0:{port}")
-    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Surepass Verification API Server")
+    parser.add_argument("--port", type=int, default=None, help="Port to bind server")
+    args, _ = parser.parse_known_args()
+
+    env_port = int(os.environ.get("PORT", 0)) if os.environ.get("PORT") else None
+    chosen_port = args.port or env_port or find_available_port(8000)
+
+    print("\n=======================================================")
+    print(f"🚀 Surepass Verification Dashboard Ready!")
+    print(f"👉 Local Browser Access:   http://localhost:{chosen_port}")
+    print(f"👉 Team / Wi-Fi Access:    http://10.185.251.231:{chosen_port}")
+    print("=======================================================\n")
+
+    uvicorn.run("server:app", host="0.0.0.0", port=chosen_port, reload=False)
+
