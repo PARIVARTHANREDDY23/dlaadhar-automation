@@ -514,6 +514,19 @@ def find_available_port(start_port: int = 8000, max_attempts: int = 30) -> int:
     return start_port
 
 
+def get_local_ip() -> str:
+    """Dynamically detects the active local Wi-Fi or LAN IP address."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('8.8.8.8', 80))
+        return s.getsockname()[0]
+    except Exception:
+        return '127.0.0.1'
+    finally:
+        s.close()
+
+
 if __name__ == "__main__":
     import uvicorn
     import argparse
@@ -524,11 +537,12 @@ if __name__ == "__main__":
 
     env_port = int(os.environ.get("PORT", 0)) if os.environ.get("PORT") else None
     chosen_port = args.port or env_port or find_available_port(8000)
+    local_ip = get_local_ip()
 
     print("\n=======================================================")
     print(f"🚀 Surepass Verification Dashboard Ready!")
     print(f"👉 Local Browser Access:   http://localhost:{chosen_port}")
-    print(f"👉 Team / Wi-Fi Access:    http://10.185.251.231:{chosen_port}")
+    print(f"👉 Team / Wi-Fi Access:    http://{local_ip}:{chosen_port}")
     print("=======================================================\n")
 
     uvicorn.run("server:app", host="0.0.0.0", port=chosen_port, reload=True)
