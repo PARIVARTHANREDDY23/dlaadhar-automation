@@ -525,5 +525,5 @@ if __name__ == "__main__":
     print(f"👉 Team / Wi-Fi Access:    http://10.185.251.231:{chosen_port}")
     print("=======================================================\n")
 
-    uvicorn.run("server:app", host="0.0.0.0", port=chosen_port, reload=False)
+    uvicorn.run("server:app", host="0.0.0.0", port=chosen_port, reload=True)
 

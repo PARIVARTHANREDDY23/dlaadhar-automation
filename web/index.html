@@ -618,6 +618,13 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ filename: file.name, content_base64: base64Data })
           });
+          
+          if (res.status === 404) {
+            statusMsg.className = 'mt-4 p-3 rounded-lg text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 block';
+            statusMsg.innerText = 'Server needs a quick restart to load the new column selector. Please restart `python server.py` in your terminal.';
+            return;
+          }
+
           const json = await res.json();
           if (res.ok) {
             currentTempFileId = json.file_id;
