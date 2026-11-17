@@ -6,3 +6,4 @@ chrome.runtime.onInstalled.addListener(() => {
       .catch((err) => console.log("SidePanel behavior notice:", err));
   }
 });
+

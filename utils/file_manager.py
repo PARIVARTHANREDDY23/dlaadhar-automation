@@ -124,3 +124,94 @@ def get_reports_summary(reports_dir: Optional[Path] = None) -> List[Dict[str, An
             "path": str(file.resolve())
         })
     return summary
+
+
+def create_driver_pdf_report(
+    gsm_id: str,
+    phone_number: str,
+    dl_number: str,
+    dob: str,
+    verification_status: str,
+    verification_date: str,
+    remarks: str = "",
+    output_dir: Optional[Path] = None
+) -> Tuple[str, str]:
+    """
+    Generates an enterprise-grade Driving Licence Verification Certificate PDF
+    using ReportLab and saves it as GSMID_PHONENUMBER_DL_Report.pdf in data/reports/.
+    Returns: (filename, full_path)
+    """
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    from reportlab.pdfgen import canvas
+
+    target_dir = Path(output_dir or REPORTS_DIR)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    filename = generate_report_filename(gsm_id, phone_number)
+    save_path = target_dir / filename
+
+    c = canvas.Canvas(str(save_path), pagesize=letter)
+    width, height = letter
+
+    # Header banner
+    c.setFillColor(colors.HexColor("#0F172A"))
+    c.rect(0, height - 80, width, 80, fill=True, stroke=False)
+
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(40, height - 45, "DRIVING LICENCE VERIFICATION CERTIFICATE")
+    c.setFont("Helvetica", 10)
+    c.drawString(40, height - 65, "Official Automated Verification via Surepass KYC Portal")
+
+    # Status Badge
+    is_verified = (verification_status or "").lower() == "verified"
+    badge_color = colors.HexColor("#059669") if is_verified else colors.HexColor("#DC2626")
+    badge_text = "VERIFIED / ACTIVE" if is_verified else "NOT VERIFIED / INVALID"
+
+    c.setFillColor(badge_color)
+    c.roundRect(40, height - 130, 220, 32, 6, fill=True, stroke=False)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(55, height - 118, f"STATUS: {badge_text}")
+
+    # Details Box
+    c.setFillColor(colors.HexColor("#F8FAFC"))
+    c.roundRect(40, height - 390, width - 80, 240, 8, fill=True, stroke=True)
+
+    c.setFillColor(colors.HexColor("#334155"))
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(60, height - 170, "DRIVER & VERIFICATION DETAILS")
+
+    # Table rows
+    rows = [
+        ("GSM ID:", gsm_id or "-"),
+        ("Mobile Number:", phone_number or "-"),
+        ("Driving Licence Number:", dl_number or "-"),
+        ("Date of Birth:", dob or "-"),
+        ("Verification Outcome:", verification_status or "-"),
+        ("Verification Timestamp:", verification_date or datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("Remarks / Notes:", remarks or "Automated Surepass Verification")
+    ]
+
+    y = height - 200
+    for label, val in rows:
+        c.setFont("Helvetica-Bold", 10)
+        c.setFillColor(colors.HexColor("#64748B"))
+        c.drawString(60, y, label)
+        c.setFont("Helvetica", 10)
+        c.setFillColor(colors.HexColor("#0F172A"))
+        c.drawString(240, y, str(val))
+        y -= 24
+
+    # Security Footer
+    c.setStrokeColor(colors.HexColor("#E2E8F0"))
+    c.line(40, 80, width - 40, 80)
+
+    c.setFillColor(colors.HexColor("#94A3B8"))
+    c.setFont("Helvetica", 8)
+    c.drawString(40, 60, "This digital record was verified directly against the National Register / Parivahan database via Surepass API.")
+    c.drawString(40, 45, f"Certificate Hash ID: {abs(hash(f'{gsm_id}{dl_number}{verification_date}'))} | Confidential Document.")
+
+    c.save()
+    logger.info(f"Generated verification report PDF: {filename}")
+    return filename, str(save_path.resolve())

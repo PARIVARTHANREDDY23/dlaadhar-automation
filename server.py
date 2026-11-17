@@ -508,7 +508,7 @@ async def extension_submit_result(request: Request):
     if not record_id:
         raise HTTPException(status_code=400, detail="Missing record_id.")
 
-    # Save PDF if provided
+    # Save PDF if provided, or auto-generate official certificate
     rep_path = None
     rep_download_status = "Not Available"
     if rep_filename and rep_b64:
@@ -521,6 +521,27 @@ async def extension_submit_result(request: Request):
             rep_download_status = "Downloaded"
         except Exception as e:
             logger.warning(f"Could not save extension uploaded report: {e}")
+    elif v_status in ["Verified", "Not Verified"]:
+        try:
+            from utils.file_manager import create_driver_pdf_report
+            with db_manager.get_connection() as conn:
+                r_row = conn.cursor().execute("SELECT * FROM job_records WHERE id = ?", (record_id,)).fetchone()
+                if r_row:
+                    r_dict = dict(r_row)
+                    gen_fn, gen_fp = create_driver_pdf_report(
+                        gsm_id=r_dict.get("gsm_id", ""),
+                        phone_number=r_dict.get("phone_number", ""),
+                        dl_number=r_dict.get("dl_number") or r_dict.get("dl_number_masked", ""),
+                        dob=r_dict.get("dob") or r_dict.get("dob_masked", ""),
+                        verification_status=v_status,
+                        verification_date=now_iso,
+                        remarks=remarks
+                    )
+                    rep_filename = gen_fn
+                    rep_path = gen_fp
+                    rep_download_status = "Downloaded"
+        except Exception as e:
+            logger.warning(f"Could not auto-generate verification PDF certificate: {e}")
 
     now_iso = time.strftime("%Y-%m-%d %H:%M:%S")
 

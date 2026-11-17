@@ -1,6 +1,13 @@
 // content.js - Comprehensive Automation Engine for Surepass DL Verification
 console.log("[Surepass DL Assistant] Content engine active.");
 
+// Suppress window.print() so Chrome's print dialog does not block the automated queue
+try {
+  window.print = function() {
+    console.log("[Surepass Assistant] Intercepted window.print() to prevent modal block.");
+  };
+} catch (e) {}
+
 // Helper: Sleep
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
