@@ -63,7 +63,8 @@ async function checkServerStatus() {
       document.getElementById("jobFileText").innerText = "Ready to verify";
       const stats = data.statistics || {};
       const pending = (stats.pending || 0) + (stats.processing || 0);
-      document.getElementById("pendingCountBadge").innerText = `${pending} Pending`;
+      const total = stats.total || 0;
+      document.getElementById("pendingCountBadge").innerText = `${pending} / ${total} Pending`;
     } else {
       document.getElementById("jobIdText").innerText = "No File Loaded";
       document.getElementById("jobFileText").innerText = "Upload Excel in dashboard first";

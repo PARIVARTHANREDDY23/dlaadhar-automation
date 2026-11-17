@@ -888,6 +888,24 @@
           currentJobId = data.jobs[0].job_id;
           document.getElementById('currentJobBadge').innerText = '📁 ' + data.jobs[0].input_filename;
           loadRecords();
+
+          // Immediately fetch and render statistics via HTTP
+          try {
+            const jRes = await fetch(`/api/jobs/${currentJobId}`);
+            const jData = await jRes.json();
+            if (jData && jData.statistics) {
+              updateDashboardState({
+                job_id: currentJobId,
+                filename: data.jobs[0].input_filename,
+                statistics: jData.statistics,
+                state: { stage: jData.job?.status || 'Ready', message: `Loaded ${data.jobs[0].input_filename}` },
+                is_running: false,
+                is_paused: false
+              });
+            }
+          } catch (je) {
+            console.error('Failed to load initial job stats:', je);
+          }
         } else {
           document.getElementById('currentJobBadge').innerText = 'No File Loaded';
         }
@@ -895,6 +913,25 @@
       } catch (e) {
         console.error('Error fetching latest file:', e);
       }
+
+      // Continuous HTTP polling fallback (every 3 seconds) for team laptops
+      setInterval(async () => {
+        if (!currentJobId) return;
+        try {
+          const res = await fetch(`/api/jobs/${currentJobId}`);
+          const data = await res.json();
+          if (data && data.statistics) {
+            updateDashboardState({
+              job_id: currentJobId,
+              filename: data.job?.input_filename,
+              statistics: data.statistics,
+              state: { stage: data.job?.status || 'Ready', message: `Active ${data.job?.input_filename}` },
+              is_running: false,
+              is_paused: false
+            });
+          }
+        } catch (e) {}
+      }, 3000);
     };
   </script>
 </body>
