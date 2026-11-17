@@ -29,3 +29,4 @@ echo.
 echo [OK] Chrome launched! 
 echo Look for the Surepass DL Extension icon in your Chrome toolbar.
 timeout /t 5
+

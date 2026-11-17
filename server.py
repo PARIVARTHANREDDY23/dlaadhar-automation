@@ -504,7 +504,8 @@ async def download_extension_zip():
     return FileResponse(
         path=str(zip_dest),
         filename="surepass_dl_extension.zip",
-        media_type="application/zip"
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="surepass_dl_extension.zip"'}
     )
 
 
