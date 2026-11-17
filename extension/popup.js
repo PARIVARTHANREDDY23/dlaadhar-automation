@@ -230,8 +230,22 @@ async function runAutomationLoop() {
 
 // Event Listeners
 document.addEventListener("DOMContentLoaded", async () => {
-  const backend = await getBackendUrl();
+  let backend = await getBackendUrl();
   const input = document.getElementById("backendUrl");
+
+  // Auto-detect Cloudflare tunnel or active dashboard tab
+  try {
+    const tabs = await chrome.tabs.query({});
+    for (const t of tabs) {
+      if (t.url && (t.url.includes(".trycloudflare.com") || t.url.includes("railway.app") || t.url.includes("onrender.com"))) {
+        const detectedOrigin = new URL(t.url).origin;
+        backend = detectedOrigin;
+        chrome.storage.local.set({ backendUrl: detectedOrigin });
+        break;
+      }
+    }
+  } catch (e) {}
+
   if (input) input.value = backend;
 
   checkServerStatus();
