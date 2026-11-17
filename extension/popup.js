@@ -115,15 +115,32 @@ async function runAutomationLoop() {
       result = await new Promise((resolve, reject) => {
         chrome.tabs.sendMessage(tab.id, { action: "VERIFY_DRIVER", driver: driverData }, (response) => {
           if (chrome.runtime.lastError) {
-            return reject(new Error("Content script not ready. Refresh the Surepass page!"));
+            return reject(new Error(chrome.runtime.lastError.message));
           }
           resolve(response);
         });
       });
     } catch (err) {
-      log(`Tab automation notice: ${err.message}`, "warn");
-      await sleep(4000);
-      continue;
+      log("⚡ Auto-connecting script to Surepass tab...", "info");
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ["content.js"]
+        });
+        await sleep(800);
+        result = await new Promise((resolve, reject) => {
+          chrome.tabs.sendMessage(tab.id, { action: "VERIFY_DRIVER", driver: driverData }, (response) => {
+            if (chrome.runtime.lastError) {
+              return reject(new Error(chrome.runtime.lastError.message));
+            }
+            resolve(response);
+          });
+        });
+      } catch (retryErr) {
+        log(`Notice: Please refresh your Surepass page (press F5)!`, "warn");
+        await sleep(4000);
+        continue;
+      }
     }
 
     const finalStatus = (result && result.status) ? result.status : "Verification Error";
