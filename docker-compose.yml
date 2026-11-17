@@ -15,3 +15,4 @@ services:
       - ./logs:/app/logs
       - ./browser_profile:/app/browser_profile
     restart: unless-stopped
+

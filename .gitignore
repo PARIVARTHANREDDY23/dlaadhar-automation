@@ -37,3 +37,10 @@ htmlcov/
 Thumbs.db
 .vscode/
 .idea/
+
+# Cloudflare binary
+cloudflared.exe
+
+# Dynamic uploads
+data/input/upload_*
+data/*.zip

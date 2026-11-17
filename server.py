@@ -356,6 +356,158 @@ async def export_excel(job_id: str):
     )
 
 
+# --- CHROME EXTENSION CONNECTOR ENDPOINTS ---
+
+@app.get("/api/extension/status")
+async def extension_status():
+    """Returns the current active job status to the Chrome Extension."""
+    current_job = job_mgr.current_job_id
+    if not current_job:
+        latest = db_manager.get_latest_job()
+        if latest:
+            current_job = latest["job_id"]
+            job_mgr.current_job_id = current_job
+
+    if not current_job:
+        return {"connected": True, "has_job": False, "message": "No active batch in queue."}
+
+    stats = db_manager.get_job_statistics(current_job)
+    job = db_manager.get_job(current_job)
+    return {
+        "connected": True,
+        "has_job": True,
+        "job_id": current_job,
+        "filename": job.get("input_filename", "") if job else "",
+        "statistics": stats
+    }
+
+
+@app.get("/api/extension/next_driver")
+async def extension_next_driver():
+    """Provides the Chrome Extension with the next pending driver record to verify."""
+    current_job = job_mgr.current_job_id
+    if not current_job:
+        latest = db_manager.get_latest_job()
+        if latest:
+            current_job = latest["job_id"]
+            job_mgr.current_job_id = current_job
+
+    if not current_job:
+        raise HTTPException(status_code=404, detail="No active batch found.")
+
+    pending_records = db_manager.get_pending_records(current_job)
+    if not pending_records:
+        return {"has_driver": False, "message": "All drivers in batch have been verified!"}
+
+    rec = pending_records[0]
+    return {
+        "has_driver": True,
+        "job_id": current_job,
+        "record_id": rec["id"],
+        "row_index": rec["row_index"],
+        "gsm_id": rec["gsm_id"],
+        "phone_number": rec["phone_number"],
+        "dl_number": rec["dl_number"],
+        "dob": rec["dob"],
+        "pending_count": len(pending_records)
+    }
+
+
+@app.post("/api/extension/submit_result")
+async def extension_submit_result(request: Request):
+    """
+    Receives verification outcome and optional PDF report from the Chrome Extension.
+    Updates SQLite DB, writes to the output Excel spreadsheet, and notifies web dashboard.
+    """
+    body = await request.json()
+    record_id = body.get("record_id")
+    v_status = body.get("verification_status", "Verified")
+    remarks = body.get("remarks", "")
+    rep_filename = body.get("report_filename")
+    rep_b64 = body.get("report_base64")
+
+    if not record_id:
+        raise HTTPException(status_code=400, detail="Missing record_id.")
+
+    # Save PDF if provided
+    rep_path = None
+    rep_download_status = "Pending"
+    if rep_filename and rep_b64:
+        try:
+            pdf_bytes = base64.b64decode(rep_b64)
+            save_path = REPORTS_DIR / rep_filename
+            with open(save_path, "wb") as f:
+                f.write(pdf_bytes)
+            rep_path = str(save_path.resolve())
+            rep_download_status = "Downloaded"
+        except Exception as e:
+            logger.warning(f"Could not save extension uploaded report: {e}")
+
+    now_iso = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    # Update SQLite Record
+    db_manager.update_record_status(
+        record_id=record_id,
+        processing_status="Completed" if v_status in ["Verified", "Not Verified", "Invalid Details"] else "Failed",
+        verification_status=v_status,
+        verification_date=now_iso,
+        verification_remarks=remarks,
+        report_filename=rep_filename,
+        report_path=rep_path,
+        report_download_status=rep_download_status,
+        completion_timestamp=now_iso
+    )
+
+    # Incrementally update output Excel file
+    current_job = job_mgr.current_job_id
+    if current_job:
+        job_mgr.ensure_job_loaded(current_job)
+        if job_mgr.excel_processor:
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT row_index, gsm_id, phone_number FROM job_records WHERE id = ?", (record_id,))
+                r_info = cursor.fetchone()
+                if r_info:
+                    row_idx = r_info["row_index"]
+                    job_mgr.excel_processor.update_row(
+                        row_index=row_idx,
+                        verification_status=v_status,
+                        verification_date=now_iso,
+                        verification_remarks=remarks,
+                        report_filename=rep_filename or "",
+                        report_download_status=rep_download_status,
+                        processing_status="Completed"
+                    )
+                    # Update live state for WebSocket dashboard
+                    job_mgr.latest_state.update({
+                        "stage": "Extension Verifying",
+                        "message": f"Verified row {row_idx} ({r_info['gsm_id']}): {v_status}",
+                        "current_gsm": r_info["gsm_id"],
+                        "current_phone": r_info["phone_number"],
+                        "current_row": row_idx,
+                        "latest_status": v_status
+                    })
+
+    return {"success": True, "message": f"Record {record_id} updated to {v_status}."}
+
+
+@app.get("/api/extension/download-zip")
+async def download_extension_zip():
+    """Bundles the Chrome Extension files into a ZIP archive for easy team distribution."""
+    import zipfile
+    ext_dir = BASE_DIR / "extension"
+    zip_dest = DATA_DIR / "surepass_dl_extension.zip"
+    with zipfile.ZipFile(zip_dest, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in ext_dir.glob("*"):
+            if f.is_file():
+                z.write(f, arcname=f.name)
+    return FileResponse(
+        path=str(zip_dest),
+        filename="surepass_dl_extension.zip",
+        media_type="application/zip"
+    )
+
+
 # --- REPORT ENDPOINTS ---
 
 @app.get("/api/reports")
