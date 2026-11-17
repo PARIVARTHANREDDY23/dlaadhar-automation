@@ -52,27 +52,28 @@ class JobManager:
 
     def open_browser_inspector(self, url: str = SUREPASS_LOGIN_URL) -> Tuple[bool, str]:
         """
-        Launches or focuses the headed browser so operator can log in or inspect Surepass.
-        Runs safely without freezing Streamlit.
+        Launches or focuses the browser so operator can log in or inspect Surepass.
+        On cloud/Linux environments, seamlessly runs in headless mode with live screen mirroring.
         """
         import sys, os
-        if sys.platform != "win32" and not os.environ.get("DISPLAY"):
-            msg = (
-                "Cannot open a visible browser window on Streamlit Cloud (headless server with no monitor). "
-                "Because Surepass requires you to solve a CAPTCHA and enter an OTP in a real browser, "
-                "this automation must be run on your local computer (e.g. at http://localhost:8501 or on your local Wi-Fi IP)."
-            )
-            self.latest_state["stage"] = "Cloud Environment Notice"
-            self.latest_state["message"] = msg
-            return False, msg
-
-        bm = self.get_or_create_browser(headless=False)
+        is_cloud = (sys.platform != "win32" and not os.environ.get("DISPLAY"))
+        bm = self.get_or_create_browser(headless=True if is_cloud else False)
         try:
             bm.open_inspector_mode(url)
-            self.latest_state["stage"] = "Inspector Open"
-            self.latest_state["message"] = f"Browser open at {url}. Log in or inspect the portal."
-            return True, "Browser opened successfully."
+            if is_cloud:
+                self.latest_state["stage"] = "Cloud Browser Active"
+                self.latest_state["message"] = f"Cloud headless browser open at {url}. Use Live Portal Screen & Remote Login below."
+                return True, "Cloud browser active! Use the 'Live Portal Screen & Remote Login' section below to view and log in."
+            else:
+                self.latest_state["stage"] = "Inspector Open"
+                self.latest_state["message"] = f"Browser open at {url}. Log in or inspect the portal."
+                return True, "Browser opened successfully on desktop."
         except Exception as e:
+            err = str(e) or repr(e)
+            logger.error(f"Error launching inspector browser: {err}", exc_info=True)
+            self.latest_state["stage"] = "Browser Error"
+            self.latest_state["message"] = f"Could not open browser: {err}"
+            return False, err
             err = str(e) or repr(e)
             logger.error(f"Error launching inspector browser: {err}", exc_info=True)
             self.latest_state["stage"] = "Browser Error"
@@ -214,14 +215,17 @@ class JobManager:
             self.latest_state["message"] = "No active job found. Please upload and validate an Excel file first."
             return False
 
-        bm = self.get_or_create_browser(headless=headless)
+        import sys, os
+        is_cloud = (sys.platform != "win32" and not os.environ.get("DISPLAY"))
+        effective_headless = True if is_cloud else headless
+        bm = self.get_or_create_browser(headless=effective_headless)
 
         self.engine = VerificationEngine(
             job_id=self.current_job_id,
             excel_processor=self.excel_processor,
             browser_manager=bm,
             dry_run=dry_run,
-            headless=headless,
+            headless=effective_headless,
             status_callback=self._state_callback
         )
 

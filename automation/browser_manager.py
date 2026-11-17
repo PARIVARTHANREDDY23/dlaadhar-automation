@@ -130,6 +130,10 @@ class BrowserManager:
         if headless is not None:
             self.headless = headless
 
+        # Cloud/Linux fallback: Force headless if no graphical display is present
+        if sys.platform != "win32" and not os.environ.get("DISPLAY"):
+            self.headless = True
+
         logger.info(f"Starting Chromium browser (Headless: {self.headless}, Profile: {PROFILE_DIR})...")
 
         try:
@@ -213,13 +217,142 @@ class BrowserManager:
 
     def open_inspector_mode(self, url: str = SUREPASS_LOGIN_URL):
         """
-        Launches browser in headed mode to let the developer/operator inspect
+        Launches browser to let the developer/operator inspect
         elements, explore the portal, or log in manually.
+        Automatically uses headless mode on cloud/Linux environments without a display.
         """
-        logger.info(f"Launching Setup/Inspector Mode at: {url}")
-        page = self.start_browser(headless=False)
+        is_cloud = (sys.platform != "win32" and not os.environ.get("DISPLAY"))
+        logger.info(f"Launching Setup/Inspector Mode at: {url} (Cloud Headless: {is_cloud})")
+        page = self.start_browser(headless=True if is_cloud else False)
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=45000)
         except Exception as e:
             logger.warning(f"Inspector navigation notice: {e}")
         return page
+
+    def take_screenshot(self) -> Optional[bytes]:
+        """Captures page screenshot as bytes for UI mirroring."""
+        try:
+            if self.is_alive() and self.page:
+                return self.page.screenshot(type="png", full_page=False)
+        except Exception as e:
+            logger.debug(f"Failed to capture screenshot: {e}")
+        return None
+
+    def export_storage_state(self, file_path: Path) -> bool:
+        """Exports cookies and session to a JSON file."""
+        try:
+            if self.context:
+                self.context.storage_state(path=str(file_path))
+                return True
+        except Exception as e:
+            logger.error(f"Error exporting storage state: {e}")
+        return False
+
+    def import_storage_state(self, file_path: Path) -> bool:
+        """Restores cookies and session from a JSON file."""
+        try:
+            if file_path.exists() and self.context:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    state_data = json.load(f)
+                if "cookies" in state_data:
+                    self.context.add_cookies(state_data["cookies"])
+                    return True
+        except Exception as e:
+            logger.error(f"Error importing storage state: {e}")
+        return False
+
+    def remote_navigate(self, url: str) -> Tuple[bool, str]:
+        """Navigates to a specific URL."""
+        try:
+            page = self.get_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            return True, f"Navigated to {url}"
+        except Exception as e:
+            return False, f"Navigation failed: {e}"
+
+    def remote_fill_and_submit_login(self, username: str, password: str) -> Tuple[bool, str]:
+        """Remotely fills login username and password on the page."""
+        try:
+            page = self.get_page()
+            user_selectors = [
+                "input[type='email']", "input[name='email']", "input[name='username']",
+                "input[placeholder*='email' i]", "input[placeholder*='mobile' i]",
+                "input[placeholder*='phone' i]", "input[type='text']"
+            ]
+            for sel in user_selectors:
+                try:
+                    loc = page.locator(sel).first
+                    if loc.is_visible(timeout=1500):
+                        loc.fill(username)
+                        break
+                except Exception:
+                    continue
+
+            pass_selectors = ["input[type='password']", "input[name='password']"]
+            for sel in pass_selectors:
+                try:
+                    loc = page.locator(sel).first
+                    if loc.is_visible(timeout=1500):
+                        loc.fill(password)
+                        break
+                except Exception:
+                    continue
+
+            submit_selectors = [
+                "button[type='submit']", "button:has-text('Sign In')",
+                "button:has-text('Login')", "button:has-text('Log In')", "button:has-text('Continue')"
+            ]
+            clicked = False
+            for sel in submit_selectors:
+                try:
+                    btn = page.locator(sel).first
+                    if btn.is_visible(timeout=1500):
+                        btn.click()
+                        clicked = True
+                        break
+                except Exception:
+                    continue
+
+            if not clicked:
+                page.keyboard.press("Enter")
+
+            time.sleep(2)
+            return True, "Credentials submitted. Refresh live screen below."
+        except Exception as e:
+            return False, f"Failed submitting credentials: {e}"
+
+    def remote_submit_otp(self, otp: str) -> Tuple[bool, str]:
+        """Remotely fills and submits OTP code."""
+        try:
+            page = self.get_page()
+            otp_selectors = [
+                "input[name='otp']", "input[placeholder*='otp' i]",
+                "input[aria-label*='otp' i]", "input[type='text']", "input[type='number']"
+            ]
+            for sel in otp_selectors:
+                try:
+                    loc = page.locator(sel).first
+                    if loc.is_visible(timeout=1500):
+                        loc.fill(otp)
+                        break
+                except Exception:
+                    continue
+
+            btn_selectors = [
+                "button:has-text('Verify')", "button:has-text('Submit')",
+                "button:has-text('Continue')", "button[type='submit']"
+            ]
+            for sel in btn_selectors:
+                try:
+                    btn = page.locator(sel).first
+                    if btn.is_visible(timeout=1500):
+                        btn.click()
+                        break
+                except Exception:
+                    continue
+
+            time.sleep(2)
+            return True, "OTP submitted. Refresh live screen below."
+        except Exception as e:
+            return False, f"Failed submitting OTP: {e}"

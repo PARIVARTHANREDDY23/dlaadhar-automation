@@ -176,9 +176,10 @@ with col7:
 st.progress(float(stats.get("percentage", 0.0)) / 100.0)
 
 # Dashboard Tabs
-tab_ops, tab_upload, tab_reports, tab_selectors, tab_logs = st.tabs([
+tab_ops, tab_upload, tab_browser, tab_reports, tab_selectors, tab_logs = st.tabs([
     "⚡ Verification Operations",
     "📁 Excel Upload & Validation",
+    "🌐 Cloud Browser & Remote Login",
     "📄 PDF Reports",
     "⚙️ Portal Selectors",
     "📜 System Logs"
@@ -236,7 +237,9 @@ with tab_ops:
         if "Error" in stage or "Failed" in stage or "Exception" in stage:
             st.error(f"⚠️ **{stage}**: {msg}")
         elif "Auth" in stage or "login" in msg.lower():
-            st.warning(f"🔑 **{stage}**: {msg}\n\n👉 *Please switch to the Chromium browser window on your taskbar, enter your credentials/OTP, and solve any CAPTCHA.*")
+            is_cloud = (sys.platform != "win32" and not os.environ.get("DISPLAY"))
+            hint = "👉 *Open the '🌐 Cloud Browser & Remote Login' tab above to see the live portal screen, log in, or enter OTP.*" if is_cloud else "👉 *Please switch to the Chromium browser window on your taskbar, enter your credentials/OTP, and solve any CAPTCHA.*"
+            st.warning(f"🔑 **{stage}**: {msg}\n\n{hint}")
         elif is_running:
             st.info(f"🔄 **{stage}**: {msg}")
 
@@ -355,6 +358,138 @@ with tab_upload:
                 )
         else:
             st.info("Output Excel file will be generated when verification starts.")
+
+# --- TAB: CLOUD BROWSER & REMOTE LOGIN ---
+with tab_browser:
+    st.subheader("🌐 Cloud Browser Mirror & Remote Operator Login")
+    st.caption("View and control the Surepass portal directly from this interface, even when running on Streamlit Cloud.")
+
+    is_cloud_env = (sys.platform != "win32" and not os.environ.get("DISPLAY"))
+    bm = job_mgr.browser_manager
+
+    # Top Control Bar
+    b_col_act1, b_col_act2, b_col_act3 = st.columns(3)
+    with b_col_act1:
+        if st.button("🚀 Launch / Focus Portal", use_container_width=True, type="primary"):
+            ok, msg = job_mgr.open_browser_inspector(custom_portal_url.strip() or SUREPASS_LOGIN_URL)
+            if ok:
+                st.success(msg)
+            else:
+                st.error(msg)
+            st.rerun()
+
+    with b_col_act2:
+        if st.button("🔄 Refresh Screen Preview", use_container_width=True):
+            st.rerun()
+
+    with b_col_act3:
+        if st.button("🛑 Terminate Browser", use_container_width=True):
+            job_mgr.close_browser()
+            st.info("Browser closed.")
+            st.rerun()
+
+    st.markdown("---")
+
+    if bm and bm.is_alive():
+        current_url = bm.page.url if bm.page else "Unknown"
+        st.markdown(f"**Current URL:** `{current_url}`")
+
+        # Live Screen Mirror
+        screen_bytes = bm.take_screenshot()
+        if screen_bytes:
+            st.image(screen_bytes, caption=f"Live Portal Mirror ({'Cloud Headless' if is_cloud_env else 'Desktop'})", use_container_width=True)
+        else:
+            st.info("Screenshot not available yet. Click 'Refresh Screen Preview' above.")
+
+        st.markdown("---")
+        st.subheader("Interactive Remote Controls")
+        
+        rem_col1, rem_col2 = st.columns(2)
+        with rem_col1:
+            st.markdown("##### 1. Submit Credentials")
+            rem_user = st.text_input("Email / Mobile", key="rem_user")
+            rem_pass = st.text_input("Password", type="password", key="rem_pass")
+            if st.button("🔑 Submit Login Credentials", use_container_width=True):
+                if rem_user and rem_pass:
+                    ok, res = bm.remote_fill_and_submit_login(rem_user, rem_pass)
+                    if ok:
+                        st.success(res)
+                    else:
+                        st.error(res)
+                    st.rerun()
+                else:
+                    st.warning("Please enter both username and password.")
+
+        with rem_col2:
+            st.markdown("##### 2. Submit OTP or Verification Code")
+            rem_otp = st.text_input("Enter OTP Code / CAPTCHA", key="rem_otp")
+            if st.button("📲 Submit OTP Code", use_container_width=True):
+                if rem_otp:
+                    ok, res = bm.remote_submit_otp(rem_otp)
+                    if ok:
+                        st.success(res)
+                    else:
+                        st.error(res)
+                    st.rerun()
+                else:
+                    st.warning("Please enter the OTP code.")
+
+        st.markdown("---")
+        st.markdown("##### 3. Portal Navigation")
+        nav_col1, nav_col2 = st.columns(2)
+        with nav_col1:
+            if st.button("👉 Navigate to DL Verification Service", use_container_width=True):
+                ok, res = bm.remote_navigate("https://console.surepass.app/services/driving-license")
+                if ok:
+                    st.success(res)
+                else:
+                    st.error(res)
+                st.rerun()
+        with nav_col2:
+            if st.button("🏠 Navigate to Console Dashboard", use_container_width=True):
+                ok, res = bm.remote_navigate("https://console.surepass.app/")
+                if ok:
+                    st.success(res)
+                else:
+                    st.error(res)
+                st.rerun()
+
+        # Session Import / Export
+        st.markdown("---")
+        st.subheader("🍪 Session Cookie Transfer")
+        st.caption("You can export your logged-in cookies from desktop and upload them here so you are instantly logged in without typing OTP.")
+        
+        sess_col1, sess_col2 = st.columns(2)
+        with sess_col1:
+            session_file = Path("data/surepass_session.json")
+            if st.button("💾 Export Current Session", use_container_width=True):
+                if bm.export_storage_state(session_file):
+                    st.success("Session saved!")
+                    with open(session_file, "r", encoding="utf-8") as f:
+                        st.download_button(
+                            label="⬇️ Download surepass_session.json",
+                            data=f.read(),
+                            file_name="surepass_session.json",
+                            mime="application/json"
+                        )
+                else:
+                    st.error("Could not export session. Make sure browser is open.")
+
+        with sess_col2:
+            uploaded_session = st.file_uploader("Upload surepass_session.json", type=["json"], key="session_upload")
+            if uploaded_session is not None:
+                save_sess_path = Path("data/surepass_session.json")
+                with open(save_sess_path, "wb") as f:
+                    f.write(uploaded_session.getbuffer())
+                if bm.import_storage_state(save_sess_path):
+                    st.success("Session imported into browser! Refreshing page...")
+                    bm.get_page().reload()
+                    st.rerun()
+                else:
+                    st.error("Failed to import session.")
+
+    else:
+        st.info("Browser is currently idle. Click **'🚀 Launch / Focus Portal'** above to start the cloud browser session.")
 
 # --- TAB 3: REPORTS SECTION ---
 with tab_reports:
