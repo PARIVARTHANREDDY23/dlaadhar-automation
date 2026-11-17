@@ -485,9 +485,9 @@
       document.getElementById('stat-reports').innerText = stats.reports_downloaded || 0;
       document.getElementById('stat-percentage').innerText = (stats.percentage || 0) + '%';
 
-      // Auto-refresh queue table rows whenever a record completes
+      // Auto-refresh queue table rows whenever a record completes or on initial load
       const currentProcessed = stats.processed || 0;
-      if (typeof window.lastProcessedCount !== 'undefined' && window.lastProcessedCount !== currentProcessed) {
+      if (typeof window.lastProcessedCount === 'undefined' || window.lastProcessedCount !== currentProcessed) {
         loadRecords();
       }
       window.lastProcessedCount = currentProcessed;

@@ -234,55 +234,61 @@ async function verifyDriverOnPage(driver) {
     const bodyText = document.body.innerText;
     const bodyLower = bodyText.toLowerCase();
 
-    // A. Check for Live Success Indicators (Instant Detection!)
-    const hasClientId = bodyText.includes('"client_id"') || bodyText.includes("client_id");
-    const hasLicenseNum = bodyText.includes('"license_number"') || bodyText.includes("license_number");
-    const hasState = bodyText.includes('"state"') || bodyText.includes("state");
-    const hasSuccessBadge = (bodyLower.includes("200") && (bodyLower.includes("success") || bodyLower.includes("ok") || bodyLower.includes("s…"))) || bodyText.includes('"status_code": 200');
-    const hasActiveDetails = bodyLower.includes("dl details found") || bodyLower.includes("status: active") || bodyLower.includes("verification successful") || bodyLower.includes("verified");
-    const hasDriverDl = (cleanDl && bodyText.includes(cleanDl)) || (rawDl && bodyText.includes(rawDl));
-
-    if (hasClientId || (hasLicenseNum && hasState) || (hasSuccessBadge && hasDriverDl) || (hasActiveDetails && hasDriverDl) || hasSuccessBadge) {
-      finalStatus = "Verified";
-      remarks = "Driver Licence Verified Successfully (Surepass Active)";
-      console.log("[Surepass Assistant] ✓ Instant Verification Detected!");
-      break;
-    }
-
-    // B. Check for Not Verified / Invalid Details
-    if (bodyLower.includes("record not found") || 
-        bodyLower.includes("no record found") || 
-        bodyLower.includes("invalid id number") || 
-        bodyLower.includes("invalid dl") || 
-        bodyLower.includes("invalid driving license") || 
-        bodyLower.includes("404") || 
-        bodyLower.includes("422")) {
-      finalStatus = "Not Verified";
-      remarks = "Record Not Found or Invalid DL Number";
-      console.log("[Surepass Assistant] ✗ Not Found / Invalid Detected!");
-      break;
-    }
-
-    // C. Check for Portal Credits / Authorization Issues
+    // A. Check for Credits / Authorization Issues FIRST
     if (bodyLower.includes("insufficient credit") || 
         bodyLower.includes("insufficient balance") || 
         bodyLower.includes("402 payment required") || 
         bodyLower.includes("401 unauthorized")) {
       finalStatus = "Verification Error";
       remarks = "Insufficient Surepass credits or Unauthorized session";
+      console.log("[Surepass Assistant] ⚠️ Insufficient credits / Auth issue detected!");
+      break;
+    }
+
+    // B. Check for Not Verified / Record Not Found / Invalid DL
+    if (bodyLower.includes("record not found") || 
+        bodyLower.includes("no record found") || 
+        bodyLower.includes("invalid id number") || 
+        bodyLower.includes("invalid dl") || 
+        bodyLower.includes("invalid driving license") || 
+        bodyText.includes('"status_code": 404') || 
+        bodyText.includes('"status_code": 422') || 
+        bodyText.includes('"status_code": 400') || 
+        (bodyText.includes('"success": false') && !bodyText.includes('"success": true'))) {
+      finalStatus = "Not Verified";
+      remarks = "Record Not Found or Invalid DL Number";
+      console.log("[Surepass Assistant] ✗ Not Found / Invalid DL Detected!");
+      break;
+    }
+
+    // C. Check for Live Success Indicators (Instant Detection!)
+    const hasClientId = bodyText.includes('"client_id"') || bodyText.includes("client_id");
+    const hasLicenseNum = bodyText.includes('"license_number"') || bodyText.includes("license_number");
+    const hasState = bodyText.includes('"state"') || bodyText.includes("state");
+    const hasSuccessBadge = (bodyLower.includes("200") && (bodyLower.includes("success") || bodyLower.includes("ok"))) || bodyText.includes('"status_code": 200');
+    const hasActiveDetails = bodyLower.includes("dl details found") || bodyLower.includes("status: active") || bodyLower.includes("verification successful") || bodyLower.includes("status: valid");
+    const hasDriverDl = (cleanDl && bodyText.includes(cleanDl)) || (rawDl && bodyText.includes(rawDl));
+
+    if (hasClientId || (hasLicenseNum && hasState) || (hasSuccessBadge && hasDriverDl) || (hasActiveDetails && hasDriverDl)) {
+      finalStatus = "Verified";
+      remarks = "Driver Licence Verified Successfully (Surepass Active)";
+      console.log("[Surepass Assistant] ✓ Instant Verification Detected!");
       break;
     }
   }
 
-  // Fast fallback: if portal returned response without error, record Verified
+  // Fallback if loop ended
   if (!finalStatus) {
     const postBody = document.body.innerText.toLowerCase();
-    if (postBody.includes("200") || postBody.includes("client_id") || postBody.includes("license")) {
+    if (postBody.includes("record not found") || postBody.includes("invalid")) {
+      finalStatus = "Not Verified";
+      remarks = "Record Not Found or Invalid Details";
+    } else if (postBody.includes("client_id") || postBody.includes("license_number")) {
       finalStatus = "Verified";
       remarks = "Driver Licence Verified (API Response)";
     } else {
-      finalStatus = "Verified";
-      remarks = "Verified (Surepass Submitted)";
+      finalStatus = "Verification Error";
+      remarks = "Response timeout from Surepass portal";
     }
   }
 
