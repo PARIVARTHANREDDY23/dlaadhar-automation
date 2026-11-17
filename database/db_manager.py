@@ -199,8 +199,18 @@ def get_job(job_id: str) -> Optional[Dict[str, Any]]:
 def get_latest_job() -> Optional[Dict[str, Any]]:
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT 1")
+        cursor.execute("""
+            SELECT j.* FROM jobs j
+            WHERE j.job_id NOT LIKE 'test_job_%'
+            ORDER BY 
+                CASE WHEN j.status = 'Pending' THEN 0 ELSE 1 END ASC,
+                j.created_at DESC
+            LIMIT 1
+        """)
         row = cursor.fetchone()
+        if not row:
+            cursor.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT 1")
+            row = cursor.fetchone()
         return dict(row) if row else None
 
 def get_job_records(job_id: str, status_filter: Optional[str] = None) -> List[Dict[str, Any]]:
