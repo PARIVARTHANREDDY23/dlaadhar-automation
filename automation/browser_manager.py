@@ -86,6 +86,10 @@ class BrowserManager:
         PROFILE_DIR.mkdir(parents=True, exist_ok=True)
         self.clean_stale_locks(PROFILE_DIR)
 
+        # Force headless on cloud/headless Linux environments without a display
+        if sys.platform != "win32" and not os.environ.get("DISPLAY"):
+            self.headless = True
+
         if not self.headless:
             launch_args = [
                 "--disable-blink-features=AutomationControlled",

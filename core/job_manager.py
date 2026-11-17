@@ -55,6 +55,17 @@ class JobManager:
         Launches or focuses the headed browser so operator can log in or inspect Surepass.
         Runs safely without freezing Streamlit.
         """
+        import sys, os
+        if sys.platform != "win32" and not os.environ.get("DISPLAY"):
+            msg = (
+                "Cannot open a visible browser window on Streamlit Cloud (headless server with no monitor). "
+                "Because Surepass requires you to solve a CAPTCHA and enter an OTP in a real browser, "
+                "this automation must be run on your local computer (e.g. at http://localhost:8501 or on your local Wi-Fi IP)."
+            )
+            self.latest_state["stage"] = "Cloud Environment Notice"
+            self.latest_state["message"] = msg
+            return False, msg
+
         bm = self.get_or_create_browser(headless=False)
         try:
             bm.open_inspector_mode(url)

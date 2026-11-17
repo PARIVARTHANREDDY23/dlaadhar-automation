@@ -90,6 +90,13 @@ st.sidebar.image("https://img.icons8.com/fluency/96/driver-license.png", width=6
 st.sidebar.title("DL Automation")
 st.sidebar.caption("Automated Driving Licence Verification via Surepass")
 
+# Cloud / Headless warning
+if sys.platform != "win32" and not os.environ.get("DISPLAY"):
+    st.sidebar.warning(
+        "☁️ **Streamlit Cloud Detected**\n\n"
+        "The dashboard and Excel analysis are active. However, opening a visible browser for **Surepass manual login, OTP, and CAPTCHA** requires running the app on a desktop machine."
+    )
+
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ System Execution Modes")
 dry_run_mode = st.sidebar.toggle("🧪 Dry-Run Mode (Simulation)", value=False, help="Simulates processing without making real portal submissions or consuming credits.")
