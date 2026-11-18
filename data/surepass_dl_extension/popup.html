@@ -2,115 +2,273 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Surepass DL Assistant</title>
+  <title>Surepass DL Verification Suite</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { width: 380px; padding: 14px; background: #F8FAFC; color: #1E293B; font-size: 13px; }
+    body { width: 400px; min-height: 540px; padding: 12px; background: #F8FAFC; color: #1E293B; font-size: 12px; }
     
-    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #E2E8F0; }
-    .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; color: #0F172A; }
-    .status-badge { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 9999px; }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #E2E8F0; }
+    .brand { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 14px; color: #0F172A; }
+    .status-badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 9999px; }
     .status-online { background: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; }
-    .status-offline { background: #FFF1F2; color: #BE123C; border: 1px solid #FECDD3; }
+    .status-offline { background: #F1F5F9; color: #475569; border: 1px solid #CBD5E1; }
 
-    .card { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 10px; padding: 12px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
-    .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748B; margin-bottom: 6px; }
+    /* Nav Tabs */
+    .nav-tabs { display: flex; gap: 4px; background: #E2E8F0; padding: 3px; border-radius: 8px; margin-bottom: 12px; }
+    .tab-btn { flex: 1; padding: 6px 4px; font-size: 11px; font-weight: 700; border: none; background: transparent; color: #475569; border-radius: 6px; cursor: pointer; text-align: center; transition: 0.15s; }
+    .tab-btn.active { background: #FFFFFF; color: #1D4ED8; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
 
-    .config-row { display: flex; gap: 6px; margin-bottom: 10px; }
-    .config-input { flex: 1; padding: 6px 10px; font-size: 12px; border: 1px solid #CBD5E1; border-radius: 6px; background: #FFFFFF; }
-    .btn-save { padding: 6px 12px; font-size: 12px; font-weight: 600; background: #2563EB; color: #FFFFFF; border: none; border-radius: 6px; cursor: pointer; }
+    /* Cards */
+    .card { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px; margin-bottom: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .card-title { font-size: 10px; font-weight: 800; text-transform: uppercase; color: #64748B; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
 
-    .driver-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 12px; }
-    .driver-val { font-weight: 600; color: #0F172A; font-family: monospace; }
+    /* Form Controls */
+    .form-label { font-size: 10px; font-weight: 700; color: #475569; margin-bottom: 3px; display: block; }
+    .form-input, .form-select { width: 100%; padding: 6px 8px; font-size: 11px; border: 1px solid #CBD5E1; border-radius: 6px; background: #FFFFFF; }
+    .form-select { cursor: pointer; }
+    .drop-box { border: 2px dashed #94A3B8; border-radius: 8px; padding: 16px; text-align: center; background: #F8FAFC; cursor: pointer; transition: 0.15s; }
+    .drop-box:hover { border-color: #2563EB; background: #EFF6FF; }
 
-    .btn-group { display: flex; gap: 6px; margin-bottom: 12px; }
-    .btn { flex: 1; padding: 8px 12px; font-size: 12px; font-weight: 600; border-radius: 6px; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px; transition: 0.15s; }
+    /* Buttons */
+    .btn { padding: 7px 12px; font-size: 11px; font-weight: 700; border-radius: 6px; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px; transition: 0.15s; }
     .btn-primary { background: #2563EB; color: #FFFFFF; }
     .btn-primary:hover { background: #1D4ED8; }
     .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
     .btn-danger { background: #E11D48; color: #FFFFFF; }
     .btn-danger:hover { background: #BE123C; }
+    .btn-emerald { background: #059669; color: #FFFFFF; }
+    .btn-emerald:hover { background: #047857; }
+    .btn-outline { background: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; }
+    .btn-outline:hover { background: #E2E8F0; }
 
-    .terminal { background: #0F172A; color: #94A3B8; border-radius: 8px; padding: 10px; font-family: monospace; font-size: 11px; height: 110px; overflow-y: auto; line-height: 1.4; }
+    /* Progress bar */
+    .progress-bar-wrap { width: 100%; background: #E2E8F0; height: 6px; border-radius: 9999px; overflow: hidden; margin: 6px 0; }
+    .progress-bar-fill { background: #2563EB; height: 100%; width: 0%; transition: width 0.3s; }
+
+    /* Stats Grid */
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; text-align: center; margin-bottom: 8px; }
+    .stat-box { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 6px 2px; }
+    .stat-val { font-size: 13px; font-weight: 800; color: #0F172A; }
+    .stat-lbl { font-size: 9px; font-weight: 600; color: #64748B; text-transform: uppercase; }
+
+    /* Driver grid */
+    .driver-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 11px; }
+    .driver-val { font-weight: 700; color: #0F172A; font-family: monospace; }
+
+    /* Terminal */
+    .terminal { background: #0F172A; color: #94A3B8; border-radius: 6px; padding: 8px; font-family: monospace; font-size: 10px; height: 90px; overflow-y: auto; line-height: 1.4; }
     .log-info { color: #6EE7B7; }
     .log-warn { color: #FCD34D; }
     .log-err { color: #FDA4AF; }
+
+    /* Table */
+    .table-wrap { max-height: 140px; overflow-y: auto; border: 1px solid #E2E8F0; border-radius: 6px; font-size: 10px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { background: #F1F5F9; padding: 5px 6px; font-weight: 700; text-align: left; color: #475569; position: sticky; top: 0; }
+    td { padding: 4px 6px; border-top: 1px solid #F1F5F9; }
   </style>
 </head>
 <body>
 
+  <!-- HEADER -->
   <div class="header">
     <div class="brand">
       <span>🚗</span>
       <span>Surepass DL Assistant</span>
     </div>
-    <span id="connBadge" class="status-badge status-offline">Connecting...</span>
+    <span id="connBadge" class="status-badge status-offline">Standalone Mode</span>
   </div>
 
-  <!-- SERVER CONFIG -->
-  <div class="config-row">
-    <input type="text" id="backendUrl" class="config-input" placeholder="http://192.168.100.193:8002">
-    <button id="btnSaveConfig" class="btn-save">Connect</button>
+  <!-- NAVIGATION TABS -->
+  <div class="nav-tabs">
+    <button class="tab-btn active" id="tabNavVerify" type="button">🚀 Auto-Verify</button>
+    <button class="tab-btn" id="tabNavUpload" type="button">📁 Upload & Mapping</button>
+    <button class="tab-btn" id="tabNavExport" type="button">📋 Results & Export</button>
   </div>
 
-  <!-- ACTIVE BATCH CARD -->
-  <div class="card">
-    <div class="card-title">Active Batch Queue</div>
-    <div style="display:flex; justify-content:space-between; align-items:center;">
-      <div>
-        <div id="jobIdText" style="font-weight:700; font-size:13px; color:#0F172A;">No File Loaded</div>
-        <div id="jobFileText" style="font-size:11px; color:#64748B;">Upload an Excel sheet in dashboard</div>
+  <!-- ==================== TAB 1: AUTO-VERIFY ==================== -->
+  <div id="tabSectionVerify">
+    <!-- STATS COUNTERS -->
+    <div class="stats-grid">
+      <div class="stat-box">
+        <div id="statTotal" class="stat-val">0</div>
+        <div class="stat-lbl">Total</div>
       </div>
-      <div id="pendingCountBadge" style="font-size:12px; font-weight:700; background:#EFF6FF; color:#1D4ED8; padding:4px 8px; border-radius:6px; border:1px solid #BFDBFE;">
-        0 Pending
+      <div class="stat-box" style="border-color:#A7F3D0; background:#ECFDF5;">
+        <div id="statVerified" class="stat-val" style="color:#047857;">0</div>
+        <div class="stat-lbl" style="color:#047857;">Verified</div>
       </div>
+      <div class="stat-box" style="border-color:#FDE68A; background:#FFFBEB;">
+        <div id="statNotVerified" class="stat-val" style="color:#B45309;">0</div>
+        <div class="stat-lbl" style="color:#B45309;">Unverified</div>
+      </div>
+      <div class="stat-box">
+        <div id="statPending" class="stat-val" style="color:#2563EB;">0</div>
+        <div class="stat-lbl">Pending</div>
+      </div>
+    </div>
+
+    <!-- PROGRESS BAR -->
+    <div style="display:flex; justify-content:space-between; font-size:10px; color:#64748B;">
+      <span id="txtProgressState">Ready to verify</span>
+      <span id="txtProgressRatio">0 / 0</span>
+    </div>
+    <div class="progress-bar-wrap">
+      <div id="progressBarFill" class="progress-bar-fill"></div>
+    </div>
+
+    <!-- CURRENT TARGET CARD -->
+    <div class="card">
+      <div class="card-title">
+        <span>Current Driver Target</span>
+        <span id="badgeActiveStatus" style="font-size:10px; background:#EFF6FF; color:#1D4ED8; padding:2px 6px; border-radius:4px;">Waiting</span>
+      </div>
+      <div class="driver-grid">
+        <div><span style="color:#64748B;">GSM ID:</span> <div id="curGsmId" class="driver-val">-</div></div>
+        <div><span style="color:#64748B;">DL Number:</span> <div id="curDlNumber" class="driver-val">-</div></div>
+        <div><span style="color:#64748B;">Phone:</span> <div id="curPhone" class="driver-val">-</div></div>
+        <div><span style="color:#64748B;">DOB:</span> <div id="curDob" class="driver-val">-</div></div>
+      </div>
+    </div>
+
+    <!-- CONTROLS ROW -->
+    <div style="display:flex; gap:6px; margin-bottom:8px;">
+      <button id="btnStart" class="btn btn-primary" style="flex:1;">
+        <span>▶️ Start Auto-Verify</span>
+      </button>
+      <button id="btnStop" class="btn btn-danger" disabled>
+        <span>⏹️ Stop</span>
+      </button>
+    </div>
+
+    <div style="font-size:10px; color:#64748B; margin-bottom:6px; display:flex; justify-content:space-between;">
+      <span>📥 Auto-saving to: <b>Downloads/Surepass_DL_Reports/</b></span>
+      <span id="txtSavedCount">0 PDF Saved</span>
+    </div>
+
+    <!-- TERMINAL LOG -->
+    <div class="terminal" id="termLog">
+      <div>[Ready] Open Surepass in Chrome, upload data, and click Start.</div>
     </div>
   </div>
 
-  <!-- CURRENT DRIVER IN PROGRESS -->
-  <div class="card">
-    <div class="card-title">Current Driver Target</div>
-    <div class="driver-grid">
-      <div>
-        <span style="color:#64748B;">GSM ID:</span>
-        <div id="curGsmId" class="driver-val">-</div>
+  <!-- ==================== TAB 2: UPLOAD & MAPPING ==================== -->
+  <div id="tabSectionUpload" style="display:none;">
+    <!-- QUICK PASTE GSM NUMBERS (VERIXA AUTO-FETCH MODE) -->
+    <div class="card" style="background:#F0FDF4; border-color:#86EFAC;">
+      <div class="card-title" style="color:#166534;">
+        <span>⚡ Quick Paste GSM IDs (Verixa ➔ Surepass)</span>
+        <span style="font-size:9px; background:#DCFCE7; color:#15803D; padding:2px 6px; border-radius:4px; font-weight:700;">Auto Fetch</span>
       </div>
-      <div>
-        <span style="color:#64748B;">DL Number:</span>
-        <div id="curDlNumber" class="driver-val">-</div>
+      <p style="font-size:10px; color:#166534; margin-bottom:6px;">Paste GSM IDs below. The extension searches Verixa360 for DL & DOB, then verifies on Surepass!</p>
+      <textarea id="txtPasteGsm" placeholder="Paste GSM IDs here (one per line)&#10;GSM-FLS-10019&#10;GSM-FLS-10020" class="form-input" style="height:65px; font-family:monospace; resize:vertical; margin-bottom:6px;"></textarea>
+      <button id="btnLoadPastedGsm" class="btn btn-emerald" style="width:100%; font-size:11px;">⚡ Load GSM IDs into Queue</button>
+    </div>
+
+    <!-- FILE DROPZONE -->
+    <div class="card">
+      <div class="card-title">Or Upload Driver Sheet (.xlsx, .xls, .csv)</div>
+      <div id="dropZone" class="drop-box">
+        <div style="font-size:24px; margin-bottom:4px;">📄</div>
+        <div style="font-weight:700; color:#1E293B;">Click or Drag & Drop Excel File</div>
+        <div style="font-size:10px; color:#94A3B8; margin-top:2px;">.xlsx, .xls, or .csv</div>
+        <input type="file" id="fileInput" accept=".xlsx, .xls, .csv" style="display:none;">
       </div>
-      <div>
-        <span style="color:#64748B;">Phone:</span>
-        <div id="curPhone" class="driver-val">-</div>
+      <div id="lblFileLoaded" style="font-size:11px; color:#059669; font-weight:700; margin-top:6px; display:none;"></div>
+    </div>
+
+    <!-- GOOGLE SHEET IMPORT LINK -->
+    <div class="card">
+      <div class="card-title">Or Import from Live Google Sheet Link</div>
+      <input type="text" id="txtGSheetUrl" placeholder="https://docs.google.com/spreadsheets/d/.../edit" class="form-input" style="font-family:monospace; margin-bottom:6px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <label style="font-size:10px; color:#475569; display:flex; align-items:center; gap:4px; cursor:pointer;">
+          <input type="checkbox" id="chkFilterPendingExt" checked>
+          <span>Skip already verified rows</span>
+        </label>
+        <button id="btnFetchGSheetExt" class="btn btn-emerald" style="padding:4px 10px; font-size:10px;">📥 Fetch G-Sheet</button>
       </div>
-      <div>
-        <span style="color:#64748B;">DOB:</span>
-        <div id="curDob" class="driver-val">-</div>
+    </div>
+
+    <!-- COLUMN MAPPING CARD -->
+    <div class="card" id="cardColumnMapping" style="display:none;">
+      <div class="card-title">2. Select Column Mapping</div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; margin-bottom:8px;">
+        <div>
+          <label class="form-label">GSM ID <span style="color:#E11D48;">*</span></label>
+          <select id="selMapGsm" class="form-select"></select>
+        </div>
+        <div>
+          <label class="form-label">Phone Number <span style="color:#E11D48;">*</span></label>
+          <select id="selMapPhone" class="form-select"></select>
+        </div>
+        <div>
+          <label class="form-label">DL Number <span style="color:#E11D48;">*</span></label>
+          <select id="selMapDl" class="form-select"></select>
+        </div>
+        <div>
+          <label class="form-label">DOB <span style="color:#E11D48;">*</span></label>
+          <select id="selMapDob" class="form-select"></select>
+        </div>
       </div>
+      <button id="btnLoadQueue" class="btn btn-primary" style="width:100%;">✓ Confirm & Load Queue</button>
     </div>
   </div>
 
-  <!-- ACTION CONTROLS -->
-  <div class="btn-group">
-    <button id="btnStart" class="btn btn-primary">
-      <span>▶️ Start Auto-Verify</span>
-    </button>
-    <button id="btnStop" class="btn btn-danger" disabled>
-      <span>⏹️ Stop</span>
-    </button>
+  <!-- ==================== TAB 3: RESULTS & EXPORT ==================== -->
+  <div id="tabSectionExport" style="display:none;">
+    <!-- EXPORT ACTIONS -->
+    <div class="card" style="background:#F0FDF4; border-color:#BBF7D0;">
+      <div class="card-title" style="color:#166534;">Export Completed Records</div>
+      <p style="font-size:10px; color:#166534; margin-bottom:8px;">Export all original rows with verification status, dates, and remarks populated.</p>
+      <div style="display:flex; gap:6px;">
+        <button id="btnExportExcel" class="btn btn-primary" style="flex:1;">
+          <span>📥 Export Excel (.xlsx)</span>
+        </button>
+        <button id="btnCopyGSheet" class="btn btn-outline" style="flex:1;">
+          <span>📋 Copy G-Sheet (Ctrl+V)</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- SEARCH & FILTER TABLE -->
+    <div class="card">
+      <div class="card-title">
+        <span>Verified Driver Records</span>
+        <input type="text" id="txtFilterSearch" placeholder="Filter GSM / Phone..." class="form-input" style="width:120px; font-size:10px; padding:2px 6px;">
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Row</th>
+              <th>GSM ID</th>
+              <th>Status</th>
+              <th>Remarks</th>
+            </tr>
+          </thead>
+          <tbody id="tblRecordsBody">
+            <tr><td colspan="4" style="text-align:center; color:#94A3B8; padding:12px;">No records loaded yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- OPTIONAL BACKEND SYNC -->
+    <div style="margin-top:6px; font-size:10px; color:#64748B;">
+      <details>
+        <summary style="cursor:pointer; font-weight:600;">⚙️ Optional Server / Cloud Sync</summary>
+        <div style="display:flex; gap:4px; margin-top:4px;">
+          <input type="text" id="backendUrl" class="form-input" placeholder="http://192.168.100.193:8002" style="font-size:10px;">
+          <button id="btnSaveConfig" class="btn btn-outline" style="padding:4px 8px; font-size:10px;">Save</button>
+        </div>
+      </details>
+    </div>
   </div>
 
-  <!-- LIVE LOG TERMINAL -->
-  <div class="terminal" id="termLog">
-    <div>Ready. Open Surepass DL Verification page in Chrome and click Start.</div>
-  </div>
-
-  <div style="margin-top:10px; text-align:center;">
-    <a href="#" id="linkDashboard" style="font-size:11px; color:#2563EB; text-decoration:none; font-weight:600;">
-      Open Central Web Dashboard &rarr;
-    </a>
-  </div>
-
+  <!-- BUNDLED LIBRARIES -->
+  <script src="libs/xlsx.full.min.js"></script>
+  <script src="libs/jspdf.umd.min.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

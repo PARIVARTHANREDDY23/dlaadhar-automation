@@ -7,13 +7,28 @@ chrome.runtime.onInstalled.addListener(() => {
   }
 });
 
-// Listener for downloading verified driver PDF reports into a dedicated folder
+// Automatically route official Surepass PDF downloads to Downloads/Surepass_DL_Reports/
+chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+  const isFromSurepass = item.url && (item.url.includes("surepass.app") || item.url.includes("surepass.io"));
+  const isPdf = (item.filename && item.filename.toLowerCase().endsWith(".pdf")) || item.mime === "application/pdf";
+
+  if (isFromSurepass && isPdf) {
+    const rawName = item.filename.split(/[\\/]/).pop() || "Surepass_DL_Report.pdf";
+    suggest({
+      filename: `Surepass_DL_Reports/${rawName}`,
+      conflictAction: "uniquify"
+    });
+    return;
+  }
+  suggest();
+});
+
+// Listener for downloading files requested by popup (e.g. Exported Excel)
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "DOWNLOAD_REPORT") {
+  if (request.action === "DOWNLOAD_FILE") {
     const fileUrl = request.url;
-    const filename = request.filename || "DL_Report.pdf";
-    const subfolder = request.subfolder || "Surepass_DL_Reports";
-    const destinationPath = `${subfolder}/${filename}`;
+    const filename = request.filename || `Export_${Date.now()}.xlsx`;
+    const destinationPath = filename;
 
     if (!fileUrl) {
       sendResponse({ success: false, error: "Missing download URL" });
@@ -26,14 +41,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           url: fileUrl,
           filename: destinationPath,
           conflictAction: "overwrite",
-          saveAs: false // Automatically saves to default Downloads without prompting
+          saveAs: false
         },
         (downloadId) => {
           if (chrome.runtime.lastError) {
             console.warn("Download failed:", chrome.runtime.lastError.message);
             sendResponse({ success: false, error: chrome.runtime.lastError.message });
           } else {
-            console.log(`Report auto-downloaded successfully: ${destinationPath} (ID: ${downloadId})`);
+            console.log(`File auto-downloaded successfully: ${destinationPath} (ID: ${downloadId})`);
             sendResponse({ success: true, downloadId: downloadId, path: destinationPath });
           }
         }
@@ -45,4 +60,3 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true; // Keep message channel open for async response
   }
 });
-

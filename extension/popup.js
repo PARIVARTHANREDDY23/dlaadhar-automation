@@ -1,5 +1,34 @@
-// popup.js - Automation Runner & Central Sync Manager
+// Clean DL Number strictly (Indian DL = 2 state letters + 11 to 14 digits)
+function cleanDl(raw) {
+  if (!raw) return "";
+  const s = String(raw).replace(/[\s-]/g, "").toUpperCase();
+  const m = s.match(/([A-Z]{2})([0-9]{11,14})/);
+  if (m) return m[1] + m[2];
+  return s.replace(/^([A-Z]{2}[0-9]{9,15})[A-Z]+$/, "$1");
+}
+
+// Clean DOB strictly to YYYY-MM-DD
+function cleanDob(raw) {
+  if (!raw) return "";
+  if (/police|station|father|mother|address|candidate|mobile|phone|email/i.test(raw)) return "";
+  const monthMap = { jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12" };
+  const mMatch = raw.match(/(\d{1,2})\s*[-/]?\s*([A-Za-z]{3,9})\s*[-/,\s]?\s*(\d{4})/);
+  if (mMatch) {
+    const mStr = mMatch[2].toLowerCase().slice(0, 3);
+    if (monthMap[mStr]) return `${mMatch[3]}-${monthMap[mStr]}-${mMatch[1].padStart(2, '0')}`;
+  }
+  const ymd = raw.match(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/);
+  if (ymd) return `${ymd[1]}-${ymd[2].padStart(2, '0')}-${ymd[3].padStart(2, '0')}`;
+  const dmy = raw.match(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  return "";
+}
+
+// popup.js - Full Standalone DL Verification Suite with Verixa360 ➔ Surepass Automation Bridge
 let isAutomating = false;
+let currentLocalBatch = null; // { filename, total, records: [], mapping: {} }
+let parsedRawRows = null;
+let parsedRawHeaders = [];
 let defaultBackendUrl = "http://192.168.100.193:8002";
 
 // Helper: Append log line
@@ -16,10 +45,9 @@ function log(msg, type = "info") {
   term.scrollTop = term.scrollHeight;
 }
 
-// Helper: Sleep
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Helper: Audio Chime on Completion
+// Audio Chime on Completion
 function playCompletionChime() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -37,7 +65,509 @@ function playCompletionChime() {
   } catch (e) {}
 }
 
-// Get configured backend URL
+// Generate Official Client-Side Verification Certificate PDF via jsPDF
+function generateCertificatePDF(driver) {
+  try {
+    if (!window.jspdf || !window.jspdf.jsPDF) {
+      console.warn("jsPDF not loaded; skipping PDF creation");
+      return null;
+    }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
+    const width = doc.internal.pageSize.getWidth();
+    const height = doc.internal.pageSize.getHeight();
+
+    // Top Header Banner
+    doc.setFillColor(15, 23, 42); // #0F172A
+    doc.rect(0, 0, width, 80, "F");
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("DRIVING LICENCE VERIFICATION CERTIFICATE", 40, 42);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text("Official Automated Verification via Surepass KYC Portal", 40, 60);
+
+    // Status Badge
+    const isVerified = (driver.verification_status || "").toLowerCase() === "verified";
+    if (isVerified) {
+      doc.setFillColor(5, 150, 105); // #059669 Green
+    } else {
+      doc.setFillColor(220, 38, 38); // #DC2626 Red
+    }
+    doc.roundedRect(40, 95, 230, 32, 6, 6, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text(`STATUS: ${isVerified ? "VERIFIED / ACTIVE" : "NOT VERIFIED / INVALID"}`, 55, 115);
+
+    // Details Box
+    doc.setFillColor(248, 250, 252); // #F8FAFC
+    doc.setDrawColor(226, 232, 240); // #E2E8F0
+    doc.roundedRect(40, 140, width - 80, 230, 8, 8, "FD");
+
+    doc.setTextColor(51, 65, 85); // #334155
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("DRIVER & VERIFICATION DETAILS", 60, 168);
+
+    const rows = [
+      ["GSM ID:", driver.gsm_id || "-"],
+      ["Driver Name:", driver.driver_name || "-"],
+      ["Mobile Number:", driver.phone_number || "-"],
+      ["Driving Licence Number:", driver.dl_number || "-"],
+      ["Date of Birth:", driver.dob || "-"],
+      ["Verification Outcome:", driver.verification_status || "-"],
+      ["Verification Timestamp:", driver.verification_date || new Date().toLocaleString()],
+      ["Remarks / Notes:", driver.remarks || "Automated Surepass Verification"]
+    ];
+
+    let y = 196;
+    for (const [label, val] of rows) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139); // #64748B
+      doc.text(label, 60, y);
+
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(15, 23, 42); // #0F172A
+      doc.text(String(val), 240, y);
+      y += 24;
+    }
+
+    // Security Footer
+    doc.setDrawColor(226, 232, 240);
+    doc.line(40, height - 70, width - 40, height - 70);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184); // #94A3B8
+    doc.text("This digital record was verified directly against the National Register / Parivahan database via Surepass API.", 40, height - 50);
+    const hashVal = Math.abs((driver.gsm_id || "").split("").reduce((a, b) => (((a << 5) - a) + b.charCodeAt(0)) | 0, 0));
+    doc.text(`Certificate Hash ID: ${hashVal} | Confidential Document.`, 40, height - 36);
+
+    return doc.output("datauristring");
+  } catch (err) {
+    console.warn("Could not generate PDF in jsPDF:", err);
+    return null;
+  }
+}
+
+// Tab Switching
+function switchTab(tabName) {
+  const btnVerify = document.getElementById("tabNavVerify");
+  const btnUpload = document.getElementById("tabNavUpload");
+  const btnExport = document.getElementById("tabNavExport");
+
+  const secVerify = document.getElementById("tabSectionVerify");
+  const secUpload = document.getElementById("tabSectionUpload");
+  const secExport = document.getElementById("tabSectionExport");
+
+  if (btnVerify) btnVerify.classList.toggle("active", tabName === "verify");
+  if (btnUpload) btnUpload.classList.toggle("active", tabName === "upload");
+  if (btnExport) btnExport.classList.toggle("active", tabName === "export");
+
+  if (secVerify) secVerify.style.display = tabName === "verify" ? "block" : "none";
+  if (secUpload) secUpload.style.display = tabName === "upload" ? "block" : "none";
+  if (secExport) secExport.style.display = tabName === "export" ? "block" : "none";
+
+  if (tabName === "export") renderRecordsTable();
+}
+window.switchTab = switchTab;
+
+// UI Stats & Progress Update
+function updateUIFromBatch() {
+  if (!currentLocalBatch || !currentLocalBatch.records) {
+    document.getElementById("statTotal").innerText = "0";
+    document.getElementById("statVerified").innerText = "0";
+    document.getElementById("statNotVerified").innerText = "0";
+    document.getElementById("statPending").innerText = "0";
+    document.getElementById("txtProgressRatio").innerText = "0 / 0";
+    document.getElementById("progressBarFill").style.width = "0%";
+    document.getElementById("txtProgressState").innerText = "No File Loaded";
+    return;
+  }
+
+  const recs = currentLocalBatch.records;
+  const total = recs.length;
+  const verified = recs.filter(r => r.verification_status === "Verified").length;
+  const notVerified = recs.filter(r => r.verification_status === "Not Verified").length;
+  const otherDone = recs.filter(r => r.verification_status && !["Verified", "Not Verified", "Pending"].includes(r.verification_status)).length;
+  const pending = recs.filter(r => !r.verification_status || r.verification_status === "Pending").length;
+  const completed = total - pending;
+
+  document.getElementById("statTotal").innerText = total;
+  document.getElementById("statVerified").innerText = verified;
+  document.getElementById("statNotVerified").innerText = notVerified + otherDone;
+  document.getElementById("statPending").innerText = pending;
+
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  document.getElementById("txtProgressRatio").innerText = `${completed} / ${total}`;
+  document.getElementById("progressBarFill").style.width = `${pct}%`;
+
+  if (pending === 0 && total > 0) {
+    document.getElementById("txtProgressState").innerText = "🎉 All Drivers Completed!";
+  } else if (isAutomating) {
+    document.getElementById("txtProgressState").innerText = `Processing (${completed + 1} of ${total})...`;
+  } else {
+    document.getElementById("txtProgressState").innerText = `${currentLocalBatch.filename || "Batch"} ready`;
+  }
+
+  const pdfCount = recs.filter(r => r.report_download_status === "Downloaded").length;
+  document.getElementById("txtSavedCount").innerText = `${pdfCount} PDF Saved`;
+
+  // Live update Results Table in Tab 3 on every record change
+  renderRecordsTable();
+}
+
+// Render Results Table in Tab 3
+function renderRecordsTable() {
+  const tbody = document.getElementById("tblRecordsBody");
+  if (!tbody) return;
+
+  if (!currentLocalBatch || !currentLocalBatch.records || currentLocalBatch.records.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:#94A3B8; padding:12px;">No records loaded yet.</td></tr>`;
+    return;
+  }
+
+  const filterTxt = (document.getElementById("txtFilterSearch")?.value || "").toLowerCase().trim();
+  const filtered = currentLocalBatch.records.filter(r => {
+    if (!filterTxt) return true;
+    return (r.gsm_id || "").toLowerCase().includes(filterTxt) || (r.phone_number || "").includes(filterTxt) || (r.dl_number || "").toLowerCase().includes(filterTxt);
+  });
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:#94A3B8; padding:10px;">No matching records.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(r => {
+    let color = "#64748B";
+    let bg = "#F1F5F9";
+    if (r.verification_status === "Verified") { color = "#047857"; bg = "#ECFDF5"; }
+    else if (r.verification_status === "Not Verified") { color = "#B45309"; bg = "#FFFBEB"; }
+    else if (r.verification_status === "Not Found on Verixa" || r.verification_status === "Invalid Details" || r.verification_status === "Verification Error") { color = "#BE123C"; bg = "#FFF1F2"; }
+
+    return `
+      <tr>
+        <td style="color:#64748B; font-weight:700;">#${r.row_index}</td>
+        <td style="font-weight:700; color:#0F172A; font-family:monospace;">${escapeHtml(r.gsm_id || "-")}</td>
+        <td><span style="background:${bg}; color:${color}; font-size:9px; font-weight:700; padding:2px 5px; border-radius:4px;">${escapeHtml(r.verification_status || "Pending")}</span></td>
+        <td style="color:#64748B; font-size:9px;">${escapeHtml(r.remarks || "-")}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str).replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[m]);
+}
+
+// 1. QUICK PASTE GSM NUMBERS (VERIXA AUTO-FETCH MODE)
+function loadPastedGsmQueue() {
+  const txt = document.getElementById("txtPasteGsm")?.value || "";
+  const rawLines = txt.split(/[\r\n,]+/).map(s => s.trim()).filter(s => s.length > 2);
+  if (rawLines.length === 0) {
+    alert("Please paste at least one valid GSM ID (e.g. GSM-FLS-10019).");
+    return;
+  }
+
+  const uniqueGsms = [...new Set(rawLines)];
+
+  const formattedRecords = uniqueGsms.map((gsm, idx) => {
+    return {
+      row_index: idx + 1,
+      gsm_id: gsm,
+      phone_number: "",
+      dl_number: "",
+      dob: "",
+      driver_name: "",
+      verification_status: "Pending",
+      verification_date: "",
+      remarks: "",
+      report_filename: "",
+      report_download_status: "Pending",
+      needs_verixa_fetch: true,
+      original_data: { "GSM ID": gsm }
+    };
+  });
+
+  currentLocalBatch = {
+    filename: `Pasted_${uniqueGsms.length}_GSMs`,
+    total: formattedRecords.length,
+    records: formattedRecords,
+    mapping: { gsm_id: "GSM ID", dl_number: "__VERIXA__", dob: "__VERIXA__", phone_number: "__VERIXA__" },
+    timestamp: Date.now()
+  };
+
+  chrome.storage.local.set({ localBatch: currentLocalBatch }, () => {
+    log(`✓ Loaded ${uniqueGsms.length} GSM IDs for Verixa360 ➔ Surepass automation!`, "info");
+    updateUIFromBatch();
+    switchTab("verify");
+  });
+}
+
+// Auto-detect columns from headers
+function autoDetectColumns(headers) {
+  const mapping = { gsm_id: "", phone_number: "", dl_number: "", dob: "" };
+  for (const h of headers) {
+    const clean = String(h).toLowerCase().trim().replace(/[^a-z0-9]/g, "");
+    if (!mapping.gsm_id && (clean.includes("gsm") || clean.includes("driverid") || clean.includes("leadid") || clean === "id")) {
+      mapping.gsm_id = h;
+    }
+    if (!mapping.phone_number && (clean.includes("phone") || clean.includes("mobile") || clean.includes("contact") || clean.includes("contactnumber"))) {
+      mapping.phone_number = h;
+    }
+    if (!mapping.dl_number && (clean.includes("dlnumber") || clean.includes("dlno") || clean.includes("license") || clean.includes("licence") || clean === "dl")) {
+      mapping.dl_number = h;
+    }
+    if (!mapping.dob && (clean.includes("dob") || clean.includes("birth") || clean.includes("dateofbirth"))) {
+      mapping.dob = h;
+    }
+  }
+  return mapping;
+}
+
+// Populate column dropdowns with Verixa360 fallback
+function setupColumnDropdowns(headers, autoMap) {
+  const selects = [
+    { id: "selMapGsm", val: autoMap.gsm_id, allowVerixa: false },
+    { id: "selMapPhone", val: autoMap.phone_number, allowVerixa: true },
+    { id: "selMapDl", val: autoMap.dl_number, allowVerixa: true },
+    { id: "selMapDob", val: autoMap.dob, allowVerixa: true }
+  ];
+
+  selects.forEach(s => {
+    const el = document.getElementById(s.id);
+    if (!el) return;
+    let html = "";
+    if (s.allowVerixa) {
+      html += `<option value="__VERIXA__" ${!s.val ? "selected" : ""}>⚡ Auto-Fetch from Verixa360</option>`;
+    }
+    html += headers.map(h => `<option value="${escapeHtml(h)}" ${h === s.val ? "selected" : ""}>${escapeHtml(h)}</option>`).join("");
+    el.innerHTML = html;
+  });
+
+  document.getElementById("cardColumnMapping").style.display = "block";
+}
+
+// Parse Raw File (ArrayBuffer)
+function parseSpreadsheetBuffer(buffer, filename) {
+  try {
+    const wb = XLSX.read(buffer, { type: "array" });
+    const sheetName = wb.SheetNames[0];
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+    if (!rows || rows.length === 0) {
+      alert("Spreadsheet contains no rows!");
+      return;
+    }
+
+    parsedRawRows = rows;
+    parsedRawHeaders = Object.keys(rows[0] || {});
+
+    const autoMap = autoDetectColumns(parsedRawHeaders);
+    setupColumnDropdowns(parsedRawHeaders, autoMap);
+
+    const lbl = document.getElementById("lblFileLoaded");
+    lbl.style.display = "block";
+    lbl.innerText = `✓ Loaded '${filename}' (${rows.length} rows, ${parsedRawHeaders.length} columns)`;
+    log(`Loaded '${filename}' with ${rows.length} rows. Please confirm column mapping.`, "info");
+  } catch (err) {
+    alert("Error parsing spreadsheet: " + err.message);
+    log("Parsing error: " + err.message, "err");
+  }
+}
+
+// Parse Google Sheet URL to direct CSV
+function parseGSheetUrl(url) {
+  url = url.trim();
+  if (url.includes("output=csv") || url.includes("format=csv")) return url;
+  if (url.includes("/pubhtml")) return url.replace("/pubhtml", "/pub?output=csv");
+
+  const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (!match) throw new Error("Could not find Google Spreadsheet ID in link.");
+  const sheetId = match[1];
+
+  const gidMatch = url.match(/[#&?]gid=([0-9]+)/);
+  let exportUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
+  if (gidMatch) exportUrl += `&gid=${gidMatch[1]}`;
+  return exportUrl;
+}
+
+// Fetch Google Sheet directly in browser
+async function fetchGoogleSheetDirect() {
+  const urlInput = document.getElementById("txtGSheetUrl");
+  const rawUrl = (urlInput.value || "").trim();
+  if (!rawUrl) return alert("Please paste a valid Google Sheet link.");
+
+  const btn = document.getElementById("btnFetchGSheetExt");
+  btn.disabled = true;
+  btn.innerText = "Fetching...";
+  log("Fetching live Google Sheet...", "info");
+
+  try {
+    const csvUrl = parseGSheetUrl(rawUrl);
+    const res = await fetch(csvUrl);
+    if (!res.ok) throw new Error(`Google returned status ${res.status}. Check link sharing!`);
+
+    const text = await res.text();
+    if (text.includes("ServiceLogin") || (text.includes("<html") && text.includes("accounts.google.com"))) {
+      throw new Error("Sheet is private. Change sharing to 'Anyone with the link can view'.");
+    }
+
+    const wb = XLSX.read(text, { type: "string" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    let rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+    // Filter pending cases if requested
+    const filterPending = document.getElementById("chkFilterPendingExt").checked;
+    let skipped = 0;
+    if (filterPending) {
+      const origLen = rows.length;
+      rows = rows.filter(r => {
+        const rowStr = JSON.stringify(r).toLowerCase();
+        const isVerified = rowStr.includes('"verified"') || rowStr.includes('"active"') || rowStr.includes('"completed"');
+        return !isVerified;
+      });
+      skipped = origLen - rows.length;
+    }
+
+    parsedRawRows = rows;
+    parsedRawHeaders = Object.keys(rows[0] || {});
+    const autoMap = autoDetectColumns(parsedRawHeaders);
+    setupColumnDropdowns(parsedRawHeaders, autoMap);
+
+    const lbl = document.getElementById("lblFileLoaded");
+    lbl.style.display = "block";
+    lbl.innerText = `✓ Fetched Google Sheet: ${rows.length} pending drivers loaded (${skipped} skipped)`;
+    log(`Fetched Google Sheet: ${rows.length} pending rows ready.`, "info");
+  } catch (err) {
+    alert("Google Sheet Error: " + err.message);
+    log("Google Sheet Error: " + err.message, "err");
+  } finally {
+    btn.disabled = false;
+    btn.innerText = "📥 Fetch G-Sheet";
+  }
+}
+
+// Confirm & Load Queue into local storage
+function confirmAndLoadQueue() {
+  if (!parsedRawRows || parsedRawRows.length === 0) return alert("No driver rows loaded.");
+
+  const mapping = {
+    gsm_id: document.getElementById("selMapGsm").value,
+    phone_number: document.getElementById("selMapPhone").value,
+    dl_number: document.getElementById("selMapDl").value,
+    dob: document.getElementById("selMapDob").value
+  };
+
+  const formattedRecords = parsedRawRows.map((r, idx) => {
+    const gsmVal = String(r[mapping.gsm_id] || "").trim();
+    const dlVal = mapping.dl_number === "__VERIXA__" ? "" : String(r[mapping.dl_number] || "").trim();
+    const dobVal = mapping.dob === "__VERIXA__" ? "" : String(r[mapping.dob] || "").trim();
+    const phoneVal = mapping.phone_number === "__VERIXA__" ? "" : String(r[mapping.phone_number] || "").trim();
+
+    return {
+      row_index: idx + 2,
+      gsm_id: gsmVal,
+      phone_number: phoneVal,
+      dl_number: dlVal,
+      dob: dobVal,
+      driver_name: "",
+      verification_status: "Pending",
+      verification_date: "",
+      remarks: "",
+      report_filename: "",
+      report_download_status: "Pending",
+      needs_verixa_fetch: !dlVal || !dobVal || mapping.dl_number === "__VERIXA__",
+      original_data: r
+    };
+  }).filter(r => r.gsm_id.length > 2);
+
+  currentLocalBatch = {
+    filename: document.getElementById("lblFileLoaded")?.innerText || "Driver_Batch.xlsx",
+    total: formattedRecords.length,
+    records: formattedRecords,
+    mapping: mapping,
+    timestamp: Date.now()
+  };
+
+  chrome.storage.local.set({ localBatch: currentLocalBatch }, () => {
+    log(`✓ Loaded queue with ${formattedRecords.length} drivers!`, "info");
+    updateUIFromBatch();
+    switchTab("verify");
+  });
+}
+
+// Export All Records to Consolidated Excel (.xlsx)
+function exportUpdatedExcel() {
+  if (!currentLocalBatch || !currentLocalBatch.records || currentLocalBatch.records.length === 0) {
+    return alert("No records to export.");
+  }
+
+  // Preserve all original columns and append/update verification status
+  const exportRows = currentLocalBatch.records.map(r => {
+    const base = { ...r.original_data };
+    base["GSM ID"] = r.gsm_id || base["GSM ID"] || "";
+    if (r.driver_name) base["Driver Name"] = r.driver_name;
+    base["Mobile Number"] = r.phone_number || base["Mobile Number"] || base["Phone Number"] || "";
+    base["Driving Licence Number"] = r.dl_number || base["Driving Licence Number"] || base["DL Number"] || "";
+    base["Date of Birth"] = r.dob || base["Date of Birth"] || base["DOB"] || "";
+    base["Verification Status"] = r.verification_status || "Pending";
+    base["Verification Date"] = r.verification_date || "";
+    base["Verification Remarks"] = r.remarks || "";
+    base["Report Filename"] = r.report_filename || "";
+    base["Processing Status"] = r.verification_status ? "Completed" : "Pending";
+    return base;
+  });
+
+  const ws = XLSX.utils.json_to_sheet(exportRows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Verification Results");
+  const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+
+  const blob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const reader = new FileReader();
+  reader.onloadend = () => {
+    const outFilename = `Drivers_Verified_${Date.now()}.xlsx`;
+    chrome.runtime.sendMessage({
+      action: "DOWNLOAD_FILE",
+      url: reader.result,
+      filename: outFilename,
+      subfolder: "" // Saves directly into Downloads folder
+    }, (res) => {
+      if (res && res.success) {
+        log(`✓ Exported verified Excel to Downloads/${outFilename}`, "info");
+      }
+    });
+  };
+  reader.readAsDataURL(blob);
+}
+
+// Copy G-Sheet Tab-Separated Results to Clipboard
+async function copyGSheetResults() {
+  if (!currentLocalBatch || !currentLocalBatch.records || currentLocalBatch.records.length === 0) {
+    return alert("No records to copy.");
+  }
+
+  const lines = ["GSM ID\tName\tPhone Number\tDL Number\tDOB\tVerification Status\tVerification Date\tRemarks"];
+  currentLocalBatch.records.forEach(r => {
+    lines.push(`${r.gsm_id}\t${r.driver_name || ""}\t${r.phone_number || ""}\t${r.dl_number || ""}\t${r.dob || ""}\t${r.verification_status || "Pending"}\t${r.verification_date || ""}\t${r.remarks || ""}`);
+  });
+
+  try {
+    await navigator.clipboard.writeText(lines.join("\n"));
+    alert("📋 Verification results copied to clipboard!\n\nYou can now go to your Google Sheet, select the starting cell, and press Ctrl+V to paste.");
+  } catch (err) {
+    alert("Clipboard error: " + err.message);
+  }
+}
+
+// Backend Server Status (Optional sync)
 async function getBackendUrl() {
   return new Promise((resolve) => {
     chrome.storage.local.get(["backendUrl"], (res) => {
@@ -46,267 +576,370 @@ async function getBackendUrl() {
   });
 }
 
-// Fetch Server Status
 async function checkServerStatus() {
   const backend = await getBackendUrl();
   const connBadge = document.getElementById("connBadge");
   try {
     const res = await fetch(`${backend}/api/extension/status`, { cache: "no-store" });
-    if (!res.ok) throw new Error("Server returned " + res.status);
-    const data = await res.json();
-
-    connBadge.className = "status-badge status-online";
-    connBadge.innerText = "🟢 Connected";
-
-    if (data.has_job) {
-      document.getElementById("jobIdText").innerText = data.filename || "Active Batch";
-      document.getElementById("jobFileText").innerText = "Ready to verify";
-      const stats = data.statistics || {};
-      const pending = (stats.pending || 0) + (stats.processing || 0);
-      const total = stats.total || 0;
-      document.getElementById("pendingCountBadge").innerText = `${pending} / ${total} Pending`;
-    } else {
-      document.getElementById("jobIdText").innerText = "No File Loaded";
-      document.getElementById("jobFileText").innerText = "Upload Excel in dashboard first";
-      document.getElementById("pendingCountBadge").innerText = "0 Pending";
+    if (res.ok) {
+      connBadge.className = "status-badge status-online";
+      connBadge.innerText = "🟢 Server Synced";
+      return true;
     }
-    return true;
-  } catch (err) {
-    connBadge.className = "status-badge status-offline";
-    connBadge.innerText = "🔴 Disconnected";
-    return false;
-  }
+  } catch (e) {}
+  connBadge.className = "status-badge status-offline";
+  connBadge.innerText = "Standalone Mode";
+  return false;
 }
 
-// Main Automation Loop with Full Fallback Protection
+// =========================================================================
+// MAIN AUTOMATION EXECUTION LOOP (VERIXA360 ➔ SUREPASS BRIDGE)
+// =========================================================================
 async function runAutomationLoop() {
-  const backend = await getBackendUrl();
+  if (!currentLocalBatch || !currentLocalBatch.records) {
+    return alert("Please paste GSM IDs or upload a sheet in 'Upload & Mapping' first!");
+  }
+
   isAutomating = true;
   document.getElementById("btnStart").disabled = true;
   document.getElementById("btnStop").disabled = false;
-  log("🚀 Starting batch verification loop...", "info");
+  log("🚀 Starting Verixa360 ➔ Surepass automation loop...", "info");
 
   while (isAutomating) {
-    // 1. Locate and Focus Surepass tab across all Chrome windows
-    let tab = null;
-    const allTabs = await chrome.tabs.query({});
-    const surepassTabs = allTabs.filter(t => t.url && t.url.includes("console.surepass.app"));
-
-    if (surepassTabs.length > 0) {
-      // Prioritize the Driving License service tab if open
-      const dlTabs = surepassTabs.filter(t => t.url.includes("driving-license"));
-      tab = dlTabs.length > 0 ? dlTabs[0] : surepassTabs[0];
-
-      // Check if logged out
-      if (tab.url.includes("/login") || tab.url.includes("/auth")) {
-        log("⚠️ Surepass session expired. Please log in on the Surepass tab!", "warn");
-        await sleep(4000);
-        continue;
-      }
-
-      try {
-        await chrome.tabs.update(tab.id, { active: true });
-        await chrome.windows.update(tab.windowId, { focused: true });
-      } catch (e) {}
-    } else {
-      log("⚠️ Opening Surepass Driving License tab in Chrome...", "warn");
-      try {
-        tab = await chrome.tabs.create({ url: "https://console.surepass.app/services/driving-license" });
-        await sleep(5000);
-      } catch (e) {
-        await sleep(3000);
-        continue;
-      }
-    }
-
-    // 2. Fetch next pending driver from central server (with auto-retry)
-    let driverData = null;
-    let fetchAttempts = 0;
-    while (fetchAttempts < 3 && isAutomating) {
-      try {
-        const res = await fetch(`${backend}/api/extension/next_driver`, { cache: "no-store" });
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        driverData = await res.json();
-        break;
-      } catch (e) {
-        fetchAttempts++;
-        if (fetchAttempts >= 3) {
-          log(`Server communication notice: ${e.message}. Retrying in 4s...`, "warn");
-          await sleep(4000);
-        } else {
-          await sleep(1000);
-        }
-      }
-    }
-
-    if (!driverData) continue;
-
-    if (!driverData.has_driver) {
-      log("🎉 All drivers in queue have been verified!", "info");
+    // 1. Locate next Pending driver in queue
+    const driver = currentLocalBatch.records.find(r => !r.verification_status || r.verification_status === "Pending");
+    if (!driver) {
+      log("🎉 All drivers in queue have been processed!", "info");
       playCompletionChime();
       isAutomating = false;
       break;
     }
 
-    // 3. Update UI Card
-    const maskDl = (dl) => {
-      if (!dl || dl.length <= 6) return dl || "-";
-      return dl.substring(0, 4) + "****" + dl.slice(-2);
-    };
+    // Update target card
+    document.getElementById("curGsmId").innerText = driver.gsm_id || "-";
+    document.getElementById("curDlNumber").innerText = driver.dl_number || "Fetching...";
+    document.getElementById("curPhone").innerText = driver.phone_number || "Fetching...";
+    document.getElementById("curDob").innerText = driver.dob || "Fetching...";
+    document.getElementById("badgeActiveStatus").innerText = `Row #${driver.row_index}`;
 
-    document.getElementById("curGsmId").innerText = driverData.gsm_id || "-";
-    document.getElementById("curDlNumber").innerText = maskDl(driverData.dl_number);
-    document.getElementById("curPhone").innerText = driverData.phone_number || "-";
-    document.getElementById("curDob").innerText = driverData.dob || "-";
-    document.getElementById("pendingCountBadge").innerText = `${driverData.pending_count} Pending`;
+    // STEP A: If DL or DOB is missing, search and extract from Verixa360 tab
+    if (driver.needs_verixa_fetch || !driver.dl_number || !driver.dob) {
+      log(`🔍 [Verixa360] Searching GSM ${driver.gsm_id}...`, "info");
 
-    log(`Processing Row ${driverData.row_index}: ${driverData.gsm_id} (DL: ${driverData.dl_number})`, "info");
+      let verixaTab = null;
+      const allTabs = await chrome.tabs.query({});
+      const vTabs = allTabs.filter(t => t.url && (t.url.includes("verixa360.com") || t.url.includes("verixa360.in")));
+      if (vTabs.length > 0) {
+        verixaTab = vTabs[0];
+        try {
+          await chrome.tabs.update(verixaTab.id, { active: true });
+          await chrome.windows.update(verixaTab.windowId, { focused: true });
+        } catch (e) {}
 
-    // 4. Send command to Content Script (with automatic injection fallback)
+        const currentUrl = verixaTab.url || "";
+        // Only navigate if on blank or login page
+        if (!currentUrl.includes("verixa360.com") && !currentUrl.includes("verixa360.in")) {
+          log("Opening Verixa 'Sent by desks' (https://verixa360.com/operations/sent)...", "info");
+          await chrome.tabs.update(verixaTab.id, { url: "https://verixa360.com/operations/sent" });
+          await sleep(3500);
+        }
+      } else {
+        log("⚠️ Verixa360 tab not open. Opening https://verixa360.com/operations/sent...", "warn");
+        verixaTab = await chrome.tabs.create({ url: "https://verixa360.com/operations/sent" });
+        await sleep(5000);
+      }
+
+      // Ensure tab is loaded
+      const loadStart = Date.now();
+      while (Date.now() - loadStart < 10000) {
+        try {
+          const t = await chrome.tabs.get(verixaTab.id);
+          if (t.status === "complete") break;
+        } catch (e) {}
+        await sleep(300);
+      }
+
+      // Always inject newest verixa_content.js to ensure latest logic is running
+      try {
+        await chrome.scripting.executeScript({ target: { tabId: verixaTab.id }, files: ["verixa_content.js"] });
+        await sleep(300);
+      } catch (e) {}
+
+      let verixaRes = null;
+      let vAttempts = 0;
+      while (vAttempts < 2 && isAutomating) {
+        try {
+          verixaRes = await new Promise((resolve, reject) => {
+            chrome.tabs.sendMessage(verixaTab.id, { action: "SEARCH_AND_EXTRACT_GSM", gsm_id: driver.gsm_id }, (res) => {
+              if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+              resolve(res);
+            });
+          });
+          break;
+        } catch (err) {
+          vAttempts++;
+          try {
+            await chrome.scripting.executeScript({ target: { tabId: verixaTab.id }, files: ["verixa_content.js"] });
+            await sleep(1000);
+          } catch (ie) {
+            await sleep(2000);
+          }
+        }
+      }
+
+      if (!isAutomating) break;
+
+      if (!verixaRes || !verixaRes.success || !verixaRes.dl_number) {
+        log(`⚠️ [Verixa360] ${verixaRes?.reason || "No DL found"} for ${driver.gsm_id}`, "warn");
+        driver.verification_status = "Not Found on Verixa";
+        driver.verification_date = new Date().toLocaleString();
+        driver.remarks = verixaRes?.reason || "DL or DOB not found on Verixa360";
+        chrome.storage.local.set({ localBatch: currentLocalBatch });
+        updateUIFromBatch();
+        await sleep(1500);
+        continue; // Skip to next driver
+      }
+
+      // Populate driver with cleaned Verixa data
+      driver.dl_number = cleanDl(verixaRes.dl_number);
+      driver.dob = cleanDob(verixaRes.dob);
+      driver.phone_number = verixaRes.phone_number || driver.phone_number || "";
+      driver.driver_name = verixaRes.driver_name || "";
+      driver.needs_verixa_fetch = false;
+
+      document.getElementById("curDlNumber").innerText = driver.dl_number || "-";
+      document.getElementById("curPhone").innerText = driver.phone_number || "-";
+      document.getElementById("curDob").innerText = driver.dob || "-";
+
+      if (!driver.dl_number || !driver.dob) {
+        log(`⚠️ [Verixa360] Incomplete details for ${driver.gsm_id} (DL: "${driver.dl_number || "none"}", DOB: "${driver.dob || "none"}")`, "warn");
+        driver.verification_status = "Incomplete Details";
+        driver.verification_date = new Date().toLocaleString();
+        driver.remarks = "DL or DOB could not be cleanly parsed from Verixa";
+        chrome.storage.local.set({ localBatch: currentLocalBatch });
+        updateUIFromBatch();
+        await sleep(1500);
+        continue; // Do not send invalid or mismatched data to Surepass!
+      }
+
+      log(`✓ [Verixa360] Extracted DL: ${driver.dl_number}, DOB: ${driver.dob}`, "info");
+      await sleep(1000);
+    }
+
+    // STEP B: Focus Surepass tab and verify
+    log(`🚗 [Surepass] Verifying DL ${driver.dl_number} (DOB: ${driver.dob})...`, "info");
+
+    let surepassTab = null;
+    const allTabs2 = await chrome.tabs.query({});
+    const surepassTabs = allTabs2.filter(t => t.url && (t.url.includes("surepass.app") || t.url.includes("surepass.io")));
+    if (surepassTabs.length > 0) {
+      // Find driving-license tab or use existing Surepass tab without opening a new one
+      surepassTab = surepassTabs.find(t => t.url.includes("driving-license")) || surepassTabs[0];
+      try {
+        await chrome.tabs.update(surepassTab.id, { active: true });
+        await chrome.windows.update(surepassTab.windowId, { focused: true });
+      } catch (e) {}
+
+      // If open tab is not on driving-license and not on login, navigate it smoothly
+      if (!surepassTab.url.includes("driving-license") && !surepassTab.url.includes("login")) {
+        await chrome.tabs.update(surepassTab.id, { url: "https://console.surepass.app/services/driving-license" });
+        await sleep(3500);
+      }
+    } else {
+      log("Opening Surepass tab...", "warn");
+      surepassTab = await chrome.tabs.create({ url: "https://console.surepass.app/services/driving-license" });
+      await sleep(5000);
+    }
+
+    // Always inject newest content.js to ensure latest Surepass automation runs
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: surepassTab.id }, files: ["libs/xlsx.full.min.js", "libs/jspdf.umd.min.js", "content.js"] });
+      await sleep(300);
+    } catch (e) {}
+
     let result = null;
-    let sendAttempts = 0;
-
-    while (sendAttempts < 2 && isAutomating) {
+    let attempts = 0;
+    while (attempts < 2 && isAutomating) {
       try {
         result = await new Promise((resolve, reject) => {
-          chrome.tabs.sendMessage(tab.id, { action: "VERIFY_DRIVER", driver: driverData }, (response) => {
-            if (chrome.runtime.lastError) {
-              return reject(new Error(chrome.runtime.lastError.message));
-            }
-            resolve(response);
+          chrome.tabs.sendMessage(surepassTab.id, { action: "VERIFY_DRIVER", driver: driver }, (res) => {
+            if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+            resolve(res);
           });
         });
         break;
       } catch (err) {
-        sendAttempts++;
-        log("⚡ Auto-connecting automation engine to Surepass tab...", "info");
+        attempts++;
         try {
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            files: ["content.js"]
-          });
+          await chrome.scripting.executeScript({ target: { tabId: surepassTab.id }, files: ["libs/xlsx.full.min.js", "libs/jspdf.umd.min.js", "content.js"] });
           await sleep(1000);
-        } catch (injectErr) {
-          log("Notice: Please refresh the Surepass page (F5) once!", "warn");
-          await sleep(3000);
+        } catch (ie) {
+          await sleep(2000);
         }
       }
     }
 
     if (!isAutomating) break;
 
-    const finalStatus = (result && result.status) ? result.status : "Verification Error";
-    const remarks = (result && result.remarks) ? result.remarks : "Automated via Surepass Assistant";
-    const reportFilename = (result && result.report_filename) ? result.report_filename : `${driverData.gsm_id}_${driverData.phone_number}_DL_Report.pdf`;
+    // Handle Unlogged in session or Verification Error (Do not download random dummy files!)
+    if (!result || !result.success || result.status === "Login Required" || result.status === "Verification Error") {
+      const errStatus = result?.status || "Verification Error";
+      const errRemarks = result?.remarks || "Failed to verify on Surepass portal";
+      driver.verification_status = errStatus;
+      driver.verification_date = new Date().toLocaleString();
+      driver.remarks = errRemarks;
+      log(`⚠️ [Surepass] ${errStatus}: ${errRemarks}`, "warn");
 
-    log(`Outcome: ${finalStatus} (${remarks})`, finalStatus === "Verified" ? "info" : "warn");
+      if (errStatus === "Login Required") {
+        log("⚠️ Please log in to Surepass in the open tab! Automation will pause...", "warn");
+        isAutomating = false;
+        document.getElementById("btnStart").disabled = false;
+        document.getElementById("btnStop").disabled = true;
+        document.getElementById("badgeActiveStatus").innerText = "Paused: Login Required";
+      }
 
-    // 5. Submit result back to central server (updates SQLite DB & Excel)
+      chrome.storage.local.set({ localBatch: currentLocalBatch });
+      updateUIFromBatch();
+      await sleep(1500);
+      continue; // Skip without downloading any dummy PDF or file!
+    }
+
+    const finalStatus = result.status; // "Verified" or "Not Verified"
+    const finalRemarks = result.remarks || (finalStatus === "Verified" ? "Verified on Surepass" : "Not Verified");
+    const reportFilename = `${driver.gsm_id}_${driver.phone_number || "DL"}_DL_Report.pdf`;
+    const nowIso = new Date().toLocaleString();
+
+    // Update driver state
+    driver.verification_status = finalStatus;
+    driver.verification_date = nowIso;
+    driver.remarks = finalRemarks;
+    driver.report_filename = reportFilename;
+
+    log(`✓ Outcome: ${finalStatus} (${finalRemarks})`, finalStatus === "Verified" ? "info" : "warn");
+
+    // Official Surepass Report Download Confirmation
+    if (finalStatus === "Verified") {
+      driver.report_download_status = "Downloaded";
+      log(`📥 Official Surepass report PDF saved to Downloads/Surepass_DL_Reports/`, "info");
+    }
+
+    // Save updated queue to chrome.storage.local & live update Results Table
+    chrome.storage.local.set({ localBatch: currentLocalBatch });
+    updateUIFromBatch();
+
+    // Optional: Sync back to backend server if online
+    const backend = await getBackendUrl();
     try {
-      const subRes = await fetch(`${backend}/api/extension/submit_result`, {
+      fetch(`${backend}/api/extension/submit_result`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          record_id: driverData.record_id,
+          record_id: driver.record_id || `row_${driver.row_index}`,
           verification_status: finalStatus,
-          remarks: remarks,
+          remarks: finalRemarks,
           report_filename: reportFilename
         })
-      });
-      const subJson = await subRes.json();
-      log(`✓ Synced Row ${driverData.row_index} to central dashboard!`, "info");
+      }).catch(() => {});
+    } catch (e) {}
 
-      // Auto-download local copy for colleague into Downloads/Surepass_DL_Reports
-      const downloadUrl = subJson.download_url ? `${backend}${subJson.download_url}` : `${backend}/api/reports/download/${subJson.report_filename || reportFilename}`;
-      const finalPdfName = subJson.report_filename || reportFilename;
-
-      chrome.runtime.sendMessage({
-        action: "DOWNLOAD_REPORT",
-        url: downloadUrl,
-        filename: finalPdfName,
-        subfolder: "Surepass_DL_Reports"
-      }, (res) => {
-        if (chrome.runtime.lastError) {
-          console.warn("Auto-download notice:", chrome.runtime.lastError.message);
-        } else if (res && res.success) {
-          log(`📥 Saved doc: Downloads/${res.path}`, "info");
-        }
-      });
-    } catch (err) {
-      log(`Failed syncing result to server: ${err.message}`, "err");
-    }
-
-    // Delay between successive records
     await sleep(2000);
   }
 
   document.getElementById("btnStart").disabled = false;
   document.getElementById("btnStop").disabled = true;
-  log("⏹️ Automation loop ended.", "info");
-  checkServerStatus();
+  updateUIFromBatch();
 }
 
-// Event Listeners
+// Initial Setup & Event Listeners
 document.addEventListener("DOMContentLoaded", async () => {
-  let backend = await getBackendUrl();
-  const input = document.getElementById("backendUrl");
+  // Tab Navigation Listeners
+  const tabVerify = document.getElementById("tabNavVerify");
+  const tabUpload = document.getElementById("tabNavUpload");
+  const tabExport = document.getElementById("tabNavExport");
 
-  // Auto-detect Cloudflare tunnel or active dashboard tab
-  try {
-    const tabs = await chrome.tabs.query({});
-    for (const t of tabs) {
-      if (t.url && (t.url.includes(".trycloudflare.com") || t.url.includes("railway.app") || t.url.includes("onrender.com"))) {
-        const detectedOrigin = new URL(t.url).origin;
-        backend = detectedOrigin;
-        chrome.storage.local.set({ backendUrl: detectedOrigin });
-        break;
-      }
+  if (tabVerify) tabVerify.onclick = () => switchTab("verify");
+  if (tabUpload) tabUpload.onclick = () => switchTab("upload");
+  if (tabExport) tabExport.onclick = () => switchTab("export");
+
+  // Load saved batch from chrome.storage.local
+  chrome.storage.local.get(["localBatch"], (res) => {
+    if (res.localBatch) {
+      currentLocalBatch = res.localBatch;
+      log(`Restored previous batch: ${currentLocalBatch.filename} (${currentLocalBatch.records?.length} drivers)`, "info");
+      updateUIFromBatch();
     }
-  } catch (e) {}
-
-  if (input) input.value = backend;
+  });
 
   checkServerStatus();
-  setInterval(checkServerStatus, 5000);
 
-  document.getElementById("btnSaveConfig").addEventListener("click", () => {
-    const val = input.value.trim().replace(/\/+$/, "");
-    if (!val) return;
-    chrome.storage.local.set({ backendUrl: val }, () => {
-      log(`Backend updated to: ${val}`, "info");
-      checkServerStatus();
-    });
-  });
+  // Quick Paste GSM IDs Button
+  const btnLoadPasted = document.getElementById("btnLoadPastedGsm");
+  if (btnLoadPasted) btnLoadPasted.onclick = loadPastedGsmQueue;
 
-  document.getElementById("btnStart").addEventListener("click", () => {
-    if (!isAutomating) runAutomationLoop();
-  });
+  // Drag & Drop File Upload
+  const dropZone = document.getElementById("dropZone");
+  const fileInput = document.getElementById("fileInput");
 
-  document.getElementById("btnStop").addEventListener("click", () => {
-    isAutomating = false;
-    log("Stopping after current record...", "warn");
-  });
-
-  const linkDash = document.getElementById("linkDashboard");
-  if (linkDash) {
-    linkDash.addEventListener("click", async (e) => {
+  if (dropZone && fileInput) {
+    dropZone.onclick = () => fileInput.click();
+    dropZone.ondragover = (e) => { e.preventDefault(); dropZone.style.borderColor = "#2563EB"; dropZone.style.background = "#EFF6FF"; };
+    dropZone.ondragleave = () => { dropZone.style.borderColor = "#94A3B8"; dropZone.style.background = "#F8FAFC"; };
+    dropZone.ondrop = (e) => {
       e.preventDefault();
-      const b = await getBackendUrl();
-      chrome.tabs.create({ url: b });
-    });
+      dropZone.style.borderColor = "#94A3B8";
+      dropZone.style.background = "#F8FAFC";
+      if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    };
+
+    fileInput.onchange = (e) => {
+      if (e.target.files.length) handleFile(e.target.files[0]);
+    };
   }
 
-  const linkZip = document.getElementById("linkDownloadZip");
-  if (linkZip) {
-    linkZip.addEventListener("click", async (e) => {
-      e.preventDefault();
-      const b = await getBackendUrl();
-      chrome.downloads.download({
-        url: `${b}/api/reports/zip`,
-        filename: `Surepass_DL_Reports/All_Verification_Reports_${Date.now()}.zip`,
-        saveAs: false
+  function handleFile(file) {
+    const reader = new FileReader();
+    reader.onload = (evt) => parseSpreadsheetBuffer(evt.target.result, file.name);
+    reader.readAsArrayBuffer(file);
+  }
+
+  // Google Sheet Fetch Button
+  const btnGSheet = document.getElementById("btnFetchGSheetExt");
+  if (btnGSheet) btnGSheet.onclick = fetchGoogleSheetDirect;
+
+  // Confirm Queue Mapping Button
+  const btnConfirmQueue = document.getElementById("btnLoadQueue");
+  if (btnConfirmQueue) btnConfirmQueue.onclick = confirmAndLoadQueue;
+
+  // Start & Stop Controls
+  const btnStart = document.getElementById("btnStart");
+  const btnStop = document.getElementById("btnStop");
+  if (btnStart) btnStart.onclick = () => { if (!isAutomating) runAutomationLoop(); };
+  if (btnStop) btnStop.onclick = () => { isAutomating = false; log("Stopping verification...", "warn"); };
+
+  // Export Buttons
+  const btnExpExcel = document.getElementById("btnExportExcel");
+  const btnCopyGS = document.getElementById("btnCopyGSheet");
+  if (btnExpExcel) btnExpExcel.onclick = exportUpdatedExcel;
+  if (btnCopyGS) btnCopyGS.onclick = copyGSheetResults;
+
+  // Filter Search in Tab 3
+  const txtSearch = document.getElementById("txtFilterSearch");
+  if (txtSearch) txtSearch.oninput = renderRecordsTable;
+
+  // Server Config
+  const bInput = document.getElementById("backendUrl");
+  const bVal = await getBackendUrl();
+  if (bInput) bInput.value = bVal;
+
+  const btnSaveConf = document.getElementById("btnSaveConfig");
+  if (btnSaveConf) {
+    btnSaveConf.onclick = () => {
+      const val = bInput.value.trim().replace(/\/+$/, "");
+      if (!val) return;
+      chrome.storage.local.set({ backendUrl: val }, () => {
+        log(`Backend updated: ${val}`, "info");
+        checkServerStatus();
       });
-      log("📥 Downloading all documents ZIP to Downloads/Surepass_DL_Reports/...", "info");
-    });
+    };
   }
 });

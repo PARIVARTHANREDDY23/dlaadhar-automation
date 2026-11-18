@@ -13,6 +13,10 @@
   ],
   "host_permissions": [
     "*://console.surepass.app/*",
+    "*://*.verixa360.com/*",
+    "*://verixa360.com/*",
+    "*://*.verixa360.in/*",
+    "*://verixa360.in/*",
     "http://*/*",
     "https://*/*"
   ],
@@ -37,9 +41,25 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://console.surepass.app/*"],
-      "js": ["content.js"],
+      "matches": ["*://console.surepass.app/*", "*://*.surepass.app/*"],
+      "js": ["libs/xlsx.full.min.js", "libs/jspdf.umd.min.js", "content.js"],
       "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "*://*.verixa360.com/*",
+        "*://verixa360.com/*",
+        "*://*.verixa360.in/*",
+        "*://verixa360.in/*"
+      ],
+      "js": ["verixa_content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["libs/*"],
+      "matches": ["*://console.surepass.app/*"]
     }
   ]
 }

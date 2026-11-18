@@ -1,130 +1,129 @@
-// content.js - Comprehensive Automation Engine for Surepass DL Verification
-console.log("[Surepass DL Assistant] Content engine active.");
+// content.js - Surepass DL Verification Content Automation
+// Injected into console.surepass.app to execute Driving Licence verifications cleanly
 
-// Suppress window.print() so Chrome's print dialog does not block the automated queue
-try {
-  window.print = function() {
-    console.log("[Surepass Assistant] Intercepted window.print() to prevent modal block.");
-  };
-} catch (e) {}
+console.log("[Surepass Assistant] Content script active on console.surepass.app");
 
-// Helper: Sleep
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Helper: Find element across document, iframes, and shadow roots
+// Helper: Format DOB for input (YYYY-MM-DD for date inputs, or DD-MM-YYYY for text inputs)
+function formatDobForInput(dobStr, inputType) {
+  if (!dobStr) return "";
+  const cleaned = dobStr.trim();
+  
+  // YYYY-MM-DD
+  const ymd = cleaned.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (ymd) {
+    if (inputType === "date") return `${ymd[1]}-${ymd[2].padStart(2, "0")}-${ymd[3].padStart(2, "0")}`;
+    return `${ymd[3].padStart(2, "0")}-${ymd[2].padStart(2, "0")}-${ymd[1]}`;
+  }
+
+  // DD-MM-YYYY
+  const dmy = cleaned.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+  if (dmy) {
+    if (inputType === "date") return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+    return `${dmy[1].padStart(2, "0")}-${dmy[2].padStart(2, "0")}-${dmy[3]}`;
+  }
+
+  return cleaned;
+}
+
+// Find element across document, iframes, and shadow roots
 function findElementEverywhere(selectors) {
-  // 1. Search main document
-  for (const sel of selectors) {
+  for (const s of selectors) {
     try {
-      const el = document.querySelector(sel);
+      const el = document.querySelector(s);
       if (el && el.offsetParent !== null) return el;
     } catch (e) {}
   }
-
-  // 2. Search inside any iframes
+  // Search inside iframes
   try {
     const iframes = document.querySelectorAll("iframe");
     for (const f of iframes) {
       try {
         const doc = f.contentDocument || f.contentWindow?.document;
-        if (doc) {
-          for (const sel of selectors) {
-            const el = doc.querySelector(sel);
-            if (el && el.offsetParent !== null) return el;
-          }
+        if (!doc) continue;
+        for (const s of selectors) {
+          const el = doc.querySelector(s);
+          if (el) return el;
         }
       } catch (e) {}
     }
   } catch (e) {}
-
   return null;
 }
 
-// Helper: Find input near label or text
-function findInputByText(text) {
-  const all = Array.from(document.querySelectorAll("label, span, div, p, h1, h2, h3, h4"));
-  for (const el of all) {
-    const txt = (el.innerText || "").trim().toLowerCase();
-    if (txt === text.toLowerCase() || txt.includes(text.toLowerCase())) {
-      const parent = el.closest("div, form, section, .form-group") || el.parentElement;
-      if (parent) {
-        const inp = parent.querySelector("input");
-        if (inp && inp.offsetParent !== null) return inp;
-      }
+// Find input by associated label text
+function findInputByText(searchText) {
+  const norm = searchText.toLowerCase();
+  const allLabels = Array.from(document.querySelectorAll("label, span, div, p")).filter(el => {
+    return (el.innerText || "").toLowerCase().includes(norm) && el.children.length === 0;
+  });
+
+  for (const label of allLabels) {
+    if (label.htmlFor) {
+      const target = document.getElementById(label.htmlFor);
+      if (target) return target;
     }
+    const parentInput = label.parentElement?.querySelector("input");
+    if (parentInput) return parentInput;
+
+    const nextInput = label.nextElementSibling?.tagName === "INPUT" ? label.nextElementSibling : label.nextElementSibling?.querySelector("input");
+    if (nextInput) return nextInput;
   }
   return null;
 }
 
-// Wait up to timeoutMs for an element to appear in DOM (handles React client-side delays)
-async function waitForElement(selectorFn, timeoutMs = 8000) {
+// Poll for element to appear
+async function waitForElement(finderFn, timeoutMs = 8000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const el = selectorFn();
+    const el = finderFn();
     if (el) return el;
-    await sleep(300);
+    await sleep(200);
   }
   return null;
 }
 
-// Robust input filler for React, Angular, and Vue controlled inputs
+// React-compatible input typing
 function setInputValue(input, value) {
   if (!input) return;
   input.focus();
-  try { input.select(); } catch (e) {}
+  input.select();
+  let typed = false;
+  try {
+    typed = document.execCommand("insertText", false, value);
+  } catch (e) {}
 
-  // React 16+ value tracker hook
-  const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
-  if (nativeSetter) {
-    nativeSetter.call(input, value);
-  } else {
-    input.value = value;
+  if (!typed || input.value !== value) {
+    const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value");
+    if (desc && desc.set) {
+      desc.set.call(input, value);
+    } else {
+      input.value = value;
+    }
+    input.dispatchEvent(new Event("input", { bubbles: true }));
   }
-  try { input.setAttribute("value", value); } catch (e) {}
-
-  // Dispatch full synthetic event chain
-  input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
-  input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-  input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, composed: true }));
-  input.dispatchEvent(new KeyboardEvent("keypress", { bubbles: true, composed: true }));
-  input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, composed: true }));
-  input.dispatchEvent(new Event("blur", { bubbles: true, composed: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-// Robust DOB formatter respecting HTML5 input types
-function formatDobForInput(dobStr, inputType) {
-  if (!dobStr) return "";
-  const raw = String(dobStr).trim().split(" ")[0].replace(/[\/.]/g, "-");
-  let yyyy = "", mm = "", dd = "";
-
-  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(raw)) {
-    [yyyy, mm, dd] = raw.split("-");
-  } else if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(raw)) {
-    [dd, mm, yyyy] = raw.split("-");
-  } else {
-    return raw;
-  }
-
-  mm = mm.padStart(2, "0");
-  dd = dd.padStart(2, "0");
-
-  // HTML5 date picker strictly expects YYYY-MM-DD
-  if (inputType === "date") {
-    return `${yyyy}-${mm}-${dd}`;
-  }
-  // Standard text input expects DD-MM-YYYY for Indian portals
-  return `${dd}-${mm}-${yyyy}`;
-}
-
-// Main Driver Verification Executor
+// Execute Verification on console.surepass.app
 async function verifyDriverOnPage(driver) {
   console.log(`[Surepass Assistant] Automating Driver: ${driver.gsm_id} | DL: ${driver.dl_number}`);
 
-  // Format clean DL (remove excessive internal spaces)
-  const cleanDl = String(driver.dl_number || "").replace(/\s+/g, "").trim().toUpperCase();
+  // Check login state first
+  const isLoginPage = /login|signin/i.test(location.href) || !!document.querySelector("input[type='password']");
+  if (isLoginPage) {
+    return {
+      success: false,
+      status: "Login Required",
+      remarks: "Surepass is not logged in. Please sign in to console.surepass.app."
+    };
+  }
+
+  const cleanDl = String(driver.dl_number || "").replace(/[\s-]/g, "").trim().toUpperCase();
   const rawDl = String(driver.dl_number || "").trim().toUpperCase();
 
-  // 1. Locate DL input (with 8-second polling for dynamic React rendering)
+  // 1. Locate DL input
   const dlSelectors = [
     "input[placeholder*='license_number' i]",
     "input[placeholder*='ID Number' i]",
@@ -144,7 +143,8 @@ async function verifyDriverOnPage(driver) {
     return findElementEverywhere(dlSelectors) || 
            findInputByText("ID Number") || 
            findInputByText("DL Number") || 
-           findInputByText("Driving License");
+           findInputByText("Driving License") ||
+           findInputByText("Driving Licence");
   }, 8000);
 
   if (!dlInput) {
@@ -155,7 +155,7 @@ async function verifyDriverOnPage(driver) {
     };
   }
 
-  // Type Clean DL first (e.g. DL1020180006014)
+  // Type DL number
   setInputValue(dlInput, cleanDl || rawDl);
   await sleep(400);
 
@@ -189,7 +189,7 @@ async function verifyDriverOnPage(driver) {
       return (txt === "submit" || txt.includes("submit") || txt.includes("verify") || txt.includes("search")) && btn.offsetParent !== null;
     });
     return candidates[0] || document.querySelector("button[type='submit']");
-  }, 4000);
+  }, 5000);
 
   if (!submitBtn) {
     return { 
@@ -199,33 +199,26 @@ async function verifyDriverOnPage(driver) {
     };
   }
 
-  // Wake up disabled button if React validation was waiting for an event
   if (submitBtn.disabled || submitBtn.getAttribute("aria-disabled") === "true") {
     dlInput.dispatchEvent(new Event("change", { bubbles: true }));
     dlInput.dispatchEvent(new Event("blur", { bubbles: true }));
     await sleep(300);
   }
 
-  // Snapshot before clicking to detect fresh response
-  const preSubmitSnippet = document.body.innerText.substring(0, 1000);
-
-  // Click Submit
   submitBtn.click();
   try { submitBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); } catch (e) {}
-  console.log("[Surepass Assistant] Submit clicked. Awaiting portal response...");
+  console.log("[Surepass Assistant] Submit clicked. Awaiting verification response...");
 
-  // 4. Await verification result (fast 300ms polling, max 12s)
+  // 4. Await verification result (poll for up to 15s)
   const startTime = Date.now();
   let finalStatus = null;
   let remarks = "";
 
-  // Brief initial wait for network roundtrip
-  await sleep(600);
+  await sleep(800);
 
-  while (Date.now() - startTime < 12000) {
-    await sleep(300);
+  while (Date.now() - startTime < 15000) {
+    await sleep(400);
 
-    // If loading spinner is actively visible, continue waiting
     const isSpinning = document.querySelector(".spinner, .loading, [aria-busy='true'], svg.animate-spin");
     if (isSpinning && isSpinning.offsetParent !== null) {
       continue;
@@ -234,18 +227,17 @@ async function verifyDriverOnPage(driver) {
     const bodyText = document.body.innerText;
     const bodyLower = bodyText.toLowerCase();
 
-    // A. Check for Credits / Authorization Issues FIRST
+    // A. Check for Credits / Auth
     if (bodyLower.includes("insufficient credit") || 
         bodyLower.includes("insufficient balance") || 
         bodyLower.includes("402 payment required") || 
         bodyLower.includes("401 unauthorized")) {
       finalStatus = "Verification Error";
       remarks = "Insufficient Surepass credits or Unauthorized session";
-      console.log("[Surepass Assistant] ⚠️ Insufficient credits / Auth issue detected!");
       break;
     }
 
-    // B. Check for Not Verified / Record Not Found / Invalid DL
+    // B. Check for Not Verified / Invalid DL
     if (bodyLower.includes("record not found") || 
         bodyLower.includes("no record found") || 
         bodyLower.includes("invalid id number") || 
@@ -253,15 +245,14 @@ async function verifyDriverOnPage(driver) {
         bodyLower.includes("invalid driving license") || 
         bodyText.includes('"status_code": 404') || 
         bodyText.includes('"status_code": 422') || 
-        bodyText.includes('"status_code": 400') || 
+        bodyText.includes('"status_code": 400') ||
         (bodyText.includes('"success": false') && !bodyText.includes('"success": true'))) {
       finalStatus = "Not Verified";
       remarks = "Record Not Found or Invalid DL Number";
-      console.log("[Surepass Assistant] ✗ Not Found / Invalid DL Detected!");
       break;
     }
 
-    // C. Check for Live Success Indicators (Instant Detection!)
+    // C. Check for Live Success
     const hasClientId = bodyText.includes('"client_id"') || bodyText.includes("client_id");
     const hasLicenseNum = bodyText.includes('"license_number"') || bodyText.includes("license_number");
     const hasState = bodyText.includes('"state"') || bodyText.includes("state");
@@ -272,47 +263,49 @@ async function verifyDriverOnPage(driver) {
     if (hasClientId || (hasLicenseNum && hasState) || (hasSuccessBadge && hasDriverDl) || (hasActiveDetails && hasDriverDl)) {
       finalStatus = "Verified";
       remarks = "Driver Licence Verified Successfully (Surepass Active)";
-      console.log("[Surepass Assistant] ✓ Instant Verification Detected!");
       break;
     }
   }
 
-  // Fallback if loop ended
   if (!finalStatus) {
-    const postBody = document.body.innerText.toLowerCase();
-    if (postBody.includes("record not found") || postBody.includes("invalid")) {
-      finalStatus = "Not Verified";
-      remarks = "Record Not Found or Invalid Details";
-    } else if (postBody.includes("client_id") || postBody.includes("license_number")) {
-      finalStatus = "Verified";
-      remarks = "Driver Licence Verified (API Response)";
-    } else {
-      finalStatus = "Verification Error";
-      remarks = "Response timeout from Surepass portal";
-    }
+    finalStatus = "Verification Error";
+    remarks = "Verification response timeout from Surepass portal";
   }
 
-  // 5. Attempt PDF Download if available
-  let reportFilename = `${driver.gsm_id}_${driver.phone_number}_DL_Report.pdf`;
-  try {
-    const downloadBtns = Array.from(document.querySelectorAll("button, a")).filter(el => {
-      const txt = (el.innerText || "").toLowerCase();
-      const aria = (el.getAttribute("aria-label") || "").toLowerCase();
-      return (txt.includes("download") || txt.includes("pdf") || aria.includes("download")) && el.offsetParent !== null;
-    });
-    if (downloadBtns.length > 0) {
-      downloadBtns[0].click();
-      await sleep(1000);
+  // 5. If Verified, click the official Surepass "Download Report" button on the portal
+  let surepassPdfTriggered = false;
+  if (finalStatus === "Verified") {
+    console.log("[Surepass Assistant] Verified! Locating official Surepass Download Report button...");
+    await sleep(1500);
+
+    const dlBtn = await waitForElement(() => {
+      const allButtons = Array.from(document.querySelectorAll("button, a, [role='button']")).filter(btn => {
+        const txt = (btn.innerText || btn.value || "").toLowerCase().trim();
+        const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
+        const title = (btn.getAttribute("title") || "").toLowerCase();
+        const hasDownload = txt.includes("download") || txt.includes("pdf") || txt.includes("report") || aria.includes("download") || aria.includes("pdf") || title.includes("download");
+        const notExcel = !txt.includes("excel") && !txt.includes("csv");
+        return hasDownload && notExcel && btn.offsetParent !== null;
+      });
+      return allButtons[0] || null;
+    }, 6000);
+
+    if (dlBtn) {
+      console.log(`[Surepass Assistant] Clicking official Surepass download button: "${dlBtn.innerText || 'Download'}"`);
+      dlBtn.click();
+      surepassPdfTriggered = true;
+      await sleep(2000);
+    } else {
+      console.warn("[Surepass Assistant] Official Surepass download button not found on result card.");
     }
-  } catch (e) {
-    console.warn("[Surepass Assistant] PDF download step skipped:", e);
   }
 
   return {
-    success: true,
+    success: finalStatus === "Verified" || finalStatus === "Not Verified",
     status: finalStatus,
     remarks: remarks,
-    report_filename: reportFilename
+    pdf_downloaded: surepassPdfTriggered,
+    report_filename: `${driver.gsm_id}_${driver.phone_number || "DL"}_DL_Report.pdf`
   };
 }
 
@@ -331,369 +324,3 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true; // Keep message channel open for async response
   }
 });
-
-// =========================================================================
-// PERMANENT IN-PAGE LEFT SIDEBAR (Never closes when Surepass is running)
-// =========================================================================
-(function initInPageSidebar() {
-  if (window !== window.top) return; // Only inject in top window
-  if (document.getElementById("surepass-assistant-container")) return;
-
-  const defaultBackend = "http://192.168.100.193:8002";
-  let inPageAutomating = false;
-
-  // Container
-  const container = document.createElement("div");
-  container.id = "surepass-assistant-container";
-  container.style.cssText = `
-    position: fixed;
-    top: 14px;
-    left: 14px;
-    width: 330px;
-    background: #FFFFFF;
-    border: 1px solid #CBD5E1;
-    border-radius: 12px;
-    box-shadow: 0 10px 25px rgba(0,0,0,0.12), 0 4px 6px -2px rgba(0,0,0,0.05);
-    z-index: 2147483647;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    color: #1E293B;
-    font-size: 12px;
-    overflow: hidden;
-    transition: transform 0.25s ease, opacity 0.25s ease;
-  `;
-
-  // Collapsed Pill Button
-  const pillBtn = document.createElement("div");
-  pillBtn.id = "surepass-assistant-pill";
-  pillBtn.style.cssText = `
-    position: fixed;
-    top: 20px;
-    left: 0;
-    background: #2563EB;
-    color: #FFFFFF;
-    padding: 7px 12px;
-    border-radius: 0 8px 8px 0;
-    cursor: pointer;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    font-size: 12px;
-    font-weight: 700;
-    box-shadow: 0 4px 12px rgba(37,99,235,0.35);
-    z-index: 2147483647;
-    display: none;
-    align-items: center;
-    gap: 6px;
-    user-select: none;
-  `;
-  pillBtn.innerHTML = `<span>🚗</span> <span>DL Assistant</span> <span id="pillCountBadge" style="background:#1D4ED8; padding:2px 6px; border-radius:9999px; font-size:10px;">0</span>`;
-
-  // Inner Sidebar HTML
-  container.innerHTML = `
-    <div style="background:#0F172A; color:#FFFFFF; padding:10px 12px; display:flex; align-items:center; justify-content:space-between; user-select:none;">
-      <div style="display:flex; align-items:center; gap:6px; font-weight:700; font-size:13px;">
-        <span>🚗</span>
-        <span>Surepass DL Assistant</span>
-      </div>
-      <div style="display:flex; align-items:center; gap:6px;">
-        <span id="sbConnBadge" style="font-size:10px; font-weight:600; padding:2px 6px; border-radius:9999px; background:#ECFDF5; color:#047857;">Connecting...</span>
-        <button id="sbBtnCollapse" title="Collapse to Left Edge" style="background:transparent; border:none; color:#94A3B8; cursor:pointer; font-size:14px; padding:2px 4px;">◀</button>
-      </div>
-    </div>
-
-    <div style="padding:10px; max-height:calc(100vh - 120px); overflow-y:auto;">
-      <!-- BACKEND URL ROW -->
-      <div style="display:flex; gap:4px; margin-bottom:8px;">
-        <input type="text" id="sbBackendUrl" style="flex:1; padding:5px 8px; font-size:11px; border:1px solid #CBD5E1; border-radius:6px; outline:none;" placeholder="http://192.168.100.193:8002">
-        <button id="sbBtnConnect" style="background:#2563EB; color:#fff; border:none; border-radius:6px; padding:5px 8px; font-weight:600; font-size:11px; cursor:pointer;">Connect</button>
-      </div>
-
-      <!-- ACTIVE QUEUE CARD -->
-      <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:8px 10px; margin-bottom:8px;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <div>
-            <div id="sbJobText" style="font-weight:700; font-size:12px; color:#0F172A;">No File Loaded</div>
-            <div id="sbJobSub" style="font-size:10px; color:#64748B;">Ready to verify</div>
-          </div>
-          <div id="sbPendingBadge" style="background:#EFF6FF; color:#1D4ED8; font-weight:700; padding:3px 8px; border-radius:6px; font-size:11px; border:1px solid #BFDBFE;">
-            0 / 0 Pending
-          </div>
-        </div>
-      </div>
-
-      <!-- CURRENT DRIVER TARGET -->
-      <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:8px 10px; margin-bottom:8px;">
-        <div style="font-size:10px; font-weight:700; text-transform:uppercase; color:#64748B; margin-bottom:4px;">Current Target</div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:11px;">
-          <div><span style="color:#64748B;">GSM:</span> <b id="sbGsmId" style="font-family:monospace;">-</b></div>
-          <div><span style="color:#64748B;">DL:</span> <b id="sbDlNumber" style="font-family:monospace;">-</b></div>
-          <div><span style="color:#64748B;">Phone:</span> <b id="sbPhone" style="font-family:monospace;">-</b></div>
-          <div><span style="color:#64748B;">DOB:</span> <b id="sbDob" style="font-family:monospace;">-</b></div>
-        </div>
-      </div>
-
-      <!-- ACTION BUTTONS -->
-      <div style="display:flex; gap:6px; margin-bottom:6px;">
-        <button id="sbBtnStart" style="flex:1; background:#2563EB; color:#fff; border:none; border-radius:6px; padding:7px; font-weight:700; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:4px;">
-          <span>▶️ Start Auto-Verify</span>
-        </button>
-        <button id="sbBtnStop" disabled style="background:#E11D48; color:#fff; border:none; border-radius:6px; padding:7px 10px; font-weight:700; font-size:12px; cursor:not-allowed; opacity:0.5;">
-          <span>⏹️ Stop</span>
-        </button>
-      </div>
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:10px;">
-        <span style="color:#64748B;">Auto-saving to: <b style="color:#2563EB;">Surepass_DL_Reports/</b></span>
-        <button id="sbBtnZip" style="background:#ECFDF5; border:1px solid #A7F3D0; color:#047857; font-weight:700; font-size:10px; padding:3px 6px; border-radius:5px; cursor:pointer;">📦 All Docs (ZIP)</button>
-      </div>
-
-      <!-- TERMINAL LOG -->
-      <div id="sbLog" style="background:#0F172A; color:#94A3B8; border-radius:6px; padding:8px; font-family:monospace; font-size:10px; height:85px; overflow-y:auto; line-height:1.4;">
-        <div style="color:#6EE7B7;">[Ready] Permanent Left Sidebar Active.</div>
-      </div>
-    </div>
-  `;
-
-  // Attach to Page
-  const attach = () => {
-    if (document.body) {
-      document.body.appendChild(container);
-      document.body.appendChild(pillBtn);
-    } else {
-      setTimeout(attach, 200);
-    }
-  };
-  attach();
-
-  // Helper: Log
-  function sbLog(msg, type = "info") {
-    const logBox = document.getElementById("sbLog");
-    if (!logBox) return;
-    const d = document.createElement("div");
-    const time = new Date().toLocaleTimeString();
-    if (type === "err") d.style.color = "#FDA4AF";
-    else if (type === "warn") d.style.color = "#FCD34D";
-    else d.style.color = "#6EE7B7";
-    d.innerText = `[${time}] ${msg}`;
-    logBox.appendChild(d);
-    logBox.scrollTop = logBox.scrollHeight;
-  }
-
-  // Toggle Collapse / Expand
-  const collapseSidebar = () => {
-    container.style.display = "none";
-    pillBtn.style.display = "flex";
-  };
-  const expandSidebar = () => {
-    pillBtn.style.display = "none";
-    container.style.display = "block";
-  };
-
-  setTimeout(() => {
-    const colBtn = document.getElementById("sbBtnCollapse");
-    if (colBtn) colBtn.onclick = collapseSidebar;
-    pillBtn.onclick = expandSidebar;
-  }, 300);
-
-  // Backend URL storage
-  async function getSavedBackend() {
-    return new Promise(resolve => {
-      chrome.storage.local.get(["backendUrl"], res => {
-        resolve(res.backendUrl || defaultBackend);
-      });
-    });
-  }
-
-  // Fetch Server Status
-  async function refreshServerStatus() {
-    const backend = await getSavedBackend();
-    const badge = document.getElementById("sbConnBadge");
-    const jobText = document.getElementById("sbJobText");
-    const pendingBadge = document.getElementById("sbPendingBadge");
-    const pillBadge = document.getElementById("pillCountBadge");
-
-    try {
-      const res = await fetch(`${backend}/api/extension/status`, { cache: "no-store" });
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const data = await res.json();
-
-      if (badge) {
-        badge.style.background = "#ECFDF5";
-        badge.style.color = "#047857";
-        badge.innerText = "🟢 Connected";
-      }
-
-      if (data.has_job) {
-        if (jobText) jobText.innerText = data.filename || "Active Batch";
-        const stats = data.statistics || {};
-        const pending = (stats.pending || 0) + (stats.processing || 0);
-        const total = stats.total || 0;
-        const txt = `${pending} / ${total} Pending`;
-        if (pendingBadge) pendingBadge.innerText = txt;
-        if (pillBadge) pillBadge.innerText = `${pending}`;
-      } else {
-        if (jobText) jobText.innerText = "No File Loaded";
-        if (pendingBadge) pendingBadge.innerText = "0 Pending";
-        if (pillBadge) pillBadge.innerText = "0";
-      }
-    } catch (e) {
-      if (badge) {
-        badge.style.background = "#FFF1F2";
-        badge.style.color = "#BE123C";
-        badge.innerText = "🔴 Disconnected";
-      }
-    }
-  }
-
-  // Automation Loop Running Inside the Webpage Tab (NEVER CLOSES!)
-  async function runInPageLoop() {
-    const backend = await getSavedBackend();
-    inPageAutomating = true;
-
-    const btnStart = document.getElementById("sbBtnStart");
-    const btnStop = document.getElementById("sbBtnStop");
-    if (btnStart) { btnStart.disabled = true; btnStart.style.opacity = "0.5"; }
-    if (btnStop) { btnStop.disabled = false; btnStop.style.opacity = "1"; btnStop.style.cursor = "pointer"; }
-
-    sbLog("🚀 Starting verification loop...", "info");
-
-    while (inPageAutomating) {
-      // 1. Fetch next driver from server
-      let driverData = null;
-      try {
-        const res = await fetch(`${backend}/api/extension/next_driver`, { cache: "no-store" });
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        driverData = await res.json();
-      } catch (e) {
-        sbLog(`Server sync notice: ${e.message}`, "warn");
-        await sleep(3000);
-        continue;
-      }
-
-      if (!driverData.has_driver) {
-        sbLog("🎉 All drivers in queue verified!", "info");
-        inPageAutomating = false;
-        break;
-      }
-
-      // 2. Update UI Card
-      document.getElementById("sbGsmId").innerText = driverData.gsm_id || "-";
-      document.getElementById("sbDlNumber").innerText = driverData.dl_number ? (driverData.dl_number.substring(0,4) + "****" + driverData.dl_number.slice(-2)) : "-";
-      document.getElementById("sbPhone").innerText = driverData.phone_number || "-";
-      document.getElementById("sbDob").innerText = driverData.dob || "-";
-      document.getElementById("sbPendingBadge").innerText = `${driverData.pending_count} Pending`;
-
-      sbLog(`Verifying Row ${driverData.row_index}: ${driverData.gsm_id}`, "info");
-
-      // 3. Execute Verification directly on this active page
-      let outcome = null;
-      try {
-        outcome = await verifyDriverOnPage(driverData);
-      } catch (vErr) {
-        outcome = { status: "Verification Error", remarks: vErr.message };
-      }
-
-      const finalStatus = outcome?.status || "Verification Error";
-      const remarks = outcome?.remarks || "Automated via Surepass Assistant";
-      const reportFilename = outcome?.report_filename || `${driverData.gsm_id}_${driverData.phone_number}_DL_Report.pdf`;
-
-      sbLog(`Outcome: ${finalStatus}`, finalStatus === "Verified" ? "info" : "warn");
-
-      // 4. Submit Result back to server
-      try {
-        const subRes = await fetch(`${backend}/api/extension/submit_result`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            record_id: driverData.record_id,
-            verification_status: finalStatus,
-            remarks: remarks,
-            report_filename: reportFilename
-          })
-        });
-        const subJson = await subRes.json();
-        sbLog(`✓ Synced Row ${driverData.row_index} to dashboard!`, "info");
-
-        // 5. Auto-Download Report PDF directly into colleague's local folder
-        const downloadUrl = subJson.download_url ? `${backend}${subJson.download_url}` : `${backend}/api/reports/download/${subJson.report_filename || reportFilename}`;
-        const finalPdfName = subJson.report_filename || reportFilename;
-
-        chrome.runtime.sendMessage({
-          action: "DOWNLOAD_REPORT",
-          url: downloadUrl,
-          filename: finalPdfName,
-          subfolder: "Surepass_DL_Reports"
-        }, (res) => {
-          if (chrome.runtime.lastError) {
-            console.warn("Auto-download notice:", chrome.runtime.lastError.message);
-          } else if (res && res.success) {
-            sbLog(`📥 Saved doc: Downloads/${res.path}`, "info");
-          }
-        });
-      } catch (sErr) {
-        sbLog(`Submit error: ${sErr.message}`, "err");
-      }
-
-      await sleep(2000);
-    }
-
-    if (btnStart) { btnStart.disabled = false; btnStart.style.opacity = "1"; }
-    if (btnStop) { btnStop.disabled = true; btnStop.style.opacity = "0.5"; btnStop.style.cursor = "not-allowed"; }
-    sbLog("⏹️ Automation loop stopped.", "info");
-    refreshServerStatus();
-  }
-
-  // Initialize inputs & listeners
-  setTimeout(async () => {
-    const backend = await getSavedBackend();
-    const input = document.getElementById("sbBackendUrl");
-    if (input) input.value = backend;
-
-    refreshServerStatus();
-    setInterval(refreshServerStatus, 5000);
-
-    const btnConnect = document.getElementById("sbBtnConnect");
-    if (btnConnect) {
-      btnConnect.onclick = () => {
-        const val = input.value.trim().replace(/\/+$/, "");
-        if (!val) return;
-        chrome.storage.local.set({ backendUrl: val }, () => {
-          sbLog(`Backend updated: ${val}`, "info");
-          refreshServerStatus();
-        });
-      };
-    }
-
-    const btnStart = document.getElementById("sbBtnStart");
-    if (btnStart) {
-      btnStart.onclick = () => {
-        if (!inPageAutomating) runInPageLoop();
-      };
-    }
-
-    const btnStop = document.getElementById("sbBtnStop");
-    if (btnStop) {
-      btnStop.onclick = () => {
-        inPageAutomating = false;
-        sbLog("Stopping after current record...", "warn");
-      };
-    }
-
-    const btnZip = document.getElementById("sbBtnZip");
-    if (btnZip) {
-      btnZip.onclick = async () => {
-        const b = await getSavedBackend();
-        chrome.runtime.sendMessage({
-          action: "DOWNLOAD_REPORT",
-          url: `${b}/api/reports/zip`,
-          filename: `All_Verification_Reports_${Date.now()}.zip`,
-          subfolder: "Surepass_DL_Reports"
-        }, (res) => {
-          if (chrome.runtime.lastError) {
-            sbLog("ZIP download error: " + chrome.runtime.lastError.message, "err");
-          } else {
-            sbLog("📦 Downloading all docs ZIP to Downloads/Surepass_DL_Reports/...", "info");
-          }
-        });
-      };
-    }
-  }, 400);
-})();
-

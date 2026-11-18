@@ -841,9 +841,10 @@ async def download_extension_zip():
     ext_dir = BASE_DIR / "extension"
     zip_dest = DATA_DIR / "surepass_dl_extension.zip"
     with zipfile.ZipFile(zip_dest, "w", zipfile.ZIP_DEFLATED) as z:
-        for f in ext_dir.glob("*"):
+        for f in ext_dir.rglob("*"):
             if f.is_file():
-                z.write(f, arcname=f.name)
+                rel_path = f.relative_to(ext_dir)
+                z.write(f, arcname=str(rel_path).replace("\\", "/"))
     return FileResponse(
         path=str(zip_dest),
         filename="surepass_dl_extension.zip",
