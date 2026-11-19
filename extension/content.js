@@ -114,25 +114,75 @@ function findElementEverywhere(selectors) {
   return null;
 }
 
-// Find input by associated label text
-function findInputByText(searchText) {
-  const norm = searchText.toLowerCase();
+// Find input by associated label text (with optional exclusion to prevent re-matching dlInput)
+function findInputByText(searchText, excludeEl = null) {
+  const norm = searchText.toLowerCase().trim();
   const allLabels = Array.from(document.querySelectorAll("label, span, div, p")).filter(el => {
-    return (el.innerText || "").toLowerCase().includes(norm) && el.children.length === 0;
+    return (el.innerText || "").toLowerCase().trim() === norm && el.children.length === 0;
   });
 
   for (const label of allLabels) {
     if (label.htmlFor) {
       const target = document.getElementById(label.htmlFor);
-      if (target) return target;
+      if (target && target !== excludeEl) return target;
     }
-    const parentInput = label.parentElement?.querySelector("input");
-    if (parentInput) return parentInput;
 
-    const nextInput = label.nextElementSibling?.tagName === "INPUT" ? label.nextElementSibling : label.nextElementSibling?.querySelector("input");
-    if (nextInput) return nextInput;
+    // Direct input inside label
+    const inside = label.querySelector("input");
+    if (inside && inside !== excludeEl) return inside;
+
+    // Next sibling input or input inside sibling wrapper
+    let sib = label.nextElementSibling;
+    while (sib) {
+      if (sib.tagName === "INPUT" && sib !== excludeEl) return sib;
+      const sibInp = sib.querySelector("input");
+      if (sibInp && sibInp !== excludeEl) return sibInp;
+      sib = sib.nextElementSibling;
+    }
+
+    // Parent wrapper input (only if parent does not contain the excluded input)
+    const parent = label.parentElement;
+    if (parent && (!excludeEl || !parent.contains(excludeEl))) {
+      const parentInput = parent.querySelector("input");
+      if (parentInput && parentInput !== excludeEl) return parentInput;
+    }
   }
   return null;
+}
+
+// Strictly isolate and identify ID Number (DL) vs DOB inputs on Surepass
+function getSurepassInputs() {
+  const formBox = Array.from(document.querySelectorAll("div, form, section")).find(el => {
+    const t = (el.innerText || "");
+    return t.includes("Request Parameters") && (t.includes("ID Number") || t.includes("License Number")) && t.includes("DOB");
+  }) || document.body;
+
+  const inputs = Array.from(formBox.querySelectorAll("input:not([type='hidden']):not([type='checkbox']):not([type='radio']):not([type='submit'])"))
+                      .filter(i => i.offsetParent !== null);
+
+  let dlInput = null;
+  let dobInput = null;
+
+  // Case 1: Standard Surepass Request Parameters form with 2 inputs (ID Number & DOB)
+  if (inputs.length === 2) {
+    dlInput = inputs[0];
+    dobInput = inputs[1];
+    return { dlInput, dobInput };
+  }
+
+  // Case 2: Multi-input fallback
+  dlInput = inputs.find(i => /id_number|license_number|license|dl/i.test((i.name || "") + (i.id || "") + (i.placeholder || ""))) ||
+            findInputByText("ID Number") ||
+            findInputByText("DL Number") ||
+            findInputByText("Driving License") ||
+            inputs[0];
+
+  dobInput = inputs.find(i => i !== dlInput && (/dob|birth|date/i.test((i.name || "") + (i.id || "") + (i.placeholder || "")) || i.type === "date")) ||
+             findInputByText("DOB", dlInput) ||
+             findInputByText("Date of Birth", dlInput) ||
+             inputs.find(i => i !== dlInput);
+
+  return { dlInput, dobInput };
 }
 
 // Poll for element to appear
@@ -146,18 +196,29 @@ async function waitForElement(finderFn, timeoutMs = 8000) {
   return null;
 }
 
-// React-compatible input typing
+// React-compatible input typing (clears input first so text is never appended)
 function setInputValue(input, value) {
   if (!input) return;
   input.focus();
-  input.select();
+
+  // 1. Force value to empty string first to avoid appending to existing text
+  const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value") ||
+               Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  if (desc && desc.set) {
+    desc.set.call(input, "");
+  } else {
+    input.value = "";
+  }
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+
+  // 2. Set clean value
   let typed = false;
   try {
+    input.select();
     typed = document.execCommand("insertText", false, value);
   } catch (e) {}
 
   if (!typed || input.value !== value) {
-    const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value");
     if (desc && desc.set) {
       desc.set.call(input, value);
     } else {
@@ -166,6 +227,7 @@ function setInputValue(input, value) {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   }
   input.dispatchEvent(new Event("change", { bubbles: true }));
+  input.dispatchEvent(new Event("blur", { bubbles: true }));
 }
 
 // Execute Verification on console.surepass.app
@@ -185,29 +247,14 @@ async function verifyDriverOnPage(driver) {
   const cleanDl = String(driver.dl_number || "").replace(/[\s-]/g, "").trim().toUpperCase();
   const rawDl = String(driver.dl_number || "").trim().toUpperCase();
 
-  // 1. Locate DL input
-  const dlSelectors = [
-    "input[placeholder*='license_number' i]",
-    "input[placeholder*='ID Number' i]",
-    "input[name*='id_number' i]",
-    "input[id*='id_number' i]",
-    "input[placeholder*='DL' i]",
-    "input[name*='dl' i]",
-    "input[id*='dl' i]",
-    "input[placeholder*='Driving Licence' i]",
-    "input[placeholder*='Driving License' i]",
-    "input[placeholder*='License' i]",
-    "input[placeholder*='Search' i]",
-    "input[type='text']"
-  ];
+  // 1. Locate DL and DOB inputs with strict isolation
+  const inputPair = await waitForElement(() => {
+    const res = getSurepassInputs();
+    return res.dlInput ? res : null;
+  }, 8000) || {};
 
-  const dlInput = await waitForElement(() => {
-    return findElementEverywhere(dlSelectors) || 
-           findInputByText("ID Number") || 
-           findInputByText("DL Number") || 
-           findInputByText("Driving License") ||
-           findInputByText("Driving Licence");
-  }, 8000);
+  const dlInput = inputPair.dlInput;
+  const dobInput = inputPair.dobInput;
 
   if (!dlInput) {
     return { 
@@ -217,38 +264,23 @@ async function verifyDriverOnPage(driver) {
     };
   }
 
-  // Type DL number
+  // Type DL number strictly into dlInput
+  console.log(`[Surepass Assistant] Entering DL Number strictly into ID Number field: "${cleanDl || rawDl}"`);
   setInputValue(dlInput, cleanDl || rawDl);
   await sleep(400);
 
-  // 2. Locate and Fill DOB input
-  if (driver.dob) {
-    const dobSelectors = [
-      "input[placeholder*='dd-mm-yyyy' i]",
-      "input[placeholder*='dob' i]",
-      "input[name*='dob' i]",
-      "input[id*='dob' i]",
-      "input[type='date']",
-      "input[placeholder*='Date of Birth' i]",
-      "input[placeholder*='DD-MM-YYYY' i]"
-    ];
+  // 2. Locate and Fill DOB strictly into dobInput (guaranteed distinct from dlInput)
+  if (driver.dob && dobInput && dobInput !== dlInput) {
+    const formattedDob = formatDobForInput(driver.dob, dobInput.type);
+    console.log(`[Surepass Assistant] Entering DOB strictly into DOB field: "${formattedDob}"`);
+    setInputValue(dobInput, formattedDob);
+    await sleep(300);
 
-    const dobInput = findElementEverywhere(dobSelectors) || 
-                     findInputByText("dob") || 
-                     findInputByText("Date of Birth");
-
-    if (dobInput) {
-      const formattedDob = formatDobForInput(driver.dob, dobInput.type);
-      console.log(`[Surepass Assistant] Entering DOB: "${formattedDob}"`);
-      setInputValue(dobInput, formattedDob);
-      await sleep(300);
-
-      // If the field rejected spaces or cleared, fallback with hyphens
-      if (!dobInput.value || dobInput.value.length < 6) {
-        const hyphenDob = formattedDob.replace(/\s+/g, "-");
-        setInputValue(dobInput, hyphenDob);
-        await sleep(200);
-      }
+    // If the field rejected spaces or cleared, fallback with hyphens
+    if (!dobInput.value || dobInput.value.length < 6) {
+      const hyphenDob = formattedDob.replace(/\s+/g, "-");
+      setInputValue(dobInput, hyphenDob);
+      await sleep(200);
     }
   }
 
