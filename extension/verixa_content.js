@@ -373,6 +373,148 @@ async function searchAndExtractGSM(gsmId) {
   }
 }
 
+// Auto-upload the official Surepass verification report PDF to Verixa under Verification results -> Driving licence certificate
+async function uploadDlCertificateToVerixa(pdfBase64, filename, gsmId) {
+  setVerixaPill(`📤 Uploading DL Certificate...`, "busy");
+  console.log(`[Verixa360 Assistant] Starting DL Certificate upload for ${gsmId}`);
+
+  if (!pdfBase64) {
+    setVerixaPill(`⚠️ Missing PDF data`, "err");
+    return { success: false, reason: "No PDF data was provided for upload." };
+  }
+
+  // Step 1: Scroll slightly up from Candidate section to "Verification results"
+  const verifHeaders = Array.from(document.querySelectorAll("h1, h2, h3, h4, h5, div, span, p, b, strong")).filter(el => 
+    visible(el) && /verification\s*results/i.test((el.innerText || "").trim())
+  );
+
+  if (verifHeaders.length > 0 && verifHeaders[0].scrollIntoView) {
+    verifHeaders[0].scrollIntoView({ block: "center", behavior: "smooth" });
+    await sleep(600);
+  } else {
+    // Fallback: smooth scroll up towards middle of page
+    window.scrollBy({ top: -750, behavior: "smooth" });
+    await sleep(500);
+  }
+
+  // Step 2: Locate the "Driving licence certificate" container
+  const allHits = Array.from(document.querySelectorAll("div, tr, li, section, fieldset")).filter(el => {
+    if (!visible(el)) return false;
+    const txt = (el.innerText || "").toLowerCase();
+    return txt.includes("driving licence certificate") || txt.includes("driving license certificate");
+  });
+
+  if (allHits.length === 0) {
+    setVerixaPill(`⚠️ DL Certificate section not found`, "err");
+    return { success: false, reason: "Could not locate 'Driving licence certificate' section under Verification results." };
+  }
+
+  // Choose the smallest/most specific container
+  allHits.sort((a, b) => (a.innerText?.length || 0) - (b.innerText?.length || 0));
+  const dlContainer = allHits[0];
+
+  // Step 3: Handle buttons: "File it", "Replace", or "Choose file"
+  const fileItBtn = Array.from(dlContainer.querySelectorAll("button, a, label, span, [role=button]")).find(b => 
+    visible(b) && /^\s*file\s*it\s*$/i.test((b.innerText || "").trim())
+  );
+
+  const replaceBtn = Array.from(dlContainer.querySelectorAll("button, a, label, span, [role=button]")).find(b => 
+    visible(b) && /^\s*replace\s*$/i.test((b.innerText || "").trim())
+  );
+
+  const chooseFileBtn = Array.from(dlContainer.querySelectorAll("button, a, label, span, [role=button]")).find(b => 
+    visible(b) && /choose\s*file/i.test((b.innerText || "").trim())
+  );
+
+  if (fileItBtn) {
+    console.log("[Verixa360 Assistant] Clicking 'File it' button...");
+    fileItBtn.click();
+    await sleep(500);
+  } else if (replaceBtn) {
+    console.log("[Verixa360 Assistant] Certificate already exists. Clicking 'Replace'...");
+    replaceBtn.click();
+    await sleep(500);
+
+    // If options appear: "Why replace it? Expired / Wrong file / Other / Replace"
+    const otherOption = Array.from(document.querySelectorAll("button, label, input, span")).find(el => 
+      visible(el) && /^\s*other\s*$/i.test((el.innerText || el.value || "").trim())
+    );
+    if (otherOption) {
+      try { otherOption.click(); } catch (e) {}
+      await sleep(300);
+    }
+
+    const confirmReplaceBtn = Array.from(document.querySelectorAll("button, [role=button]")).find(el => 
+      visible(el) && /^\s*replace\s*$/i.test((el.innerText || "").trim()) && el !== replaceBtn
+    );
+    if (confirmReplaceBtn) {
+      try { confirmReplaceBtn.click(); } catch (e) {}
+      await sleep(400);
+    }
+  }
+
+  // Step 4: Find the file input element (<input type="file">)
+  let fileInput = dlContainer.querySelector('input[type="file"]');
+  if (!fileInput) {
+    // Look in parent or modal dialog
+    const parentBox = dlContainer.closest("div, form, section, body") || document.body;
+    fileInput = parentBox.querySelector('input[type="file"]') || document.querySelector('input[type="file"]');
+  }
+
+  if (!fileInput) {
+    setVerixaPill(`⚠️ No file input found`, "err");
+    return { success: false, reason: "Could not find file upload input for Driving licence certificate." };
+  }
+
+  // Step 5: Convert Base64 data back to native File object
+  const cleanFilename = filename || `${gsmId}_Surepass_DL_Report.pdf`;
+  try {
+    const res = await fetch(pdfBase64);
+    const blob = await res.blob();
+    const pdfFile = new File([blob], cleanFilename, { type: "application/pdf", lastModified: Date.now() });
+
+    console.log(`[Verixa360 Assistant] Attaching file "${cleanFilename}" (${pdfFile.size} bytes)...`);
+
+    // Inject file via DataTransfer
+    const dt = new DataTransfer();
+    dt.items.add(pdfFile);
+    fileInput.files = dt.files;
+
+    // Dispatch standard browser events so framework registers the change
+    fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+    fileInput.dispatchEvent(new Event("input", { bubbles: true }));
+
+    // If choose file or dropzone is present, trigger drop event as well
+    const dropTarget = chooseFileBtn || dlContainer.querySelector(".dropzone, [data-dropzone]");
+    if (dropTarget) {
+      try {
+        dropTarget.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+      } catch (de) {}
+    }
+
+    await sleep(1000);
+
+    // Step 6: Check for Save / Upload / Submit button
+    const saveBtn = Array.from(dlContainer.parentElement?.querySelectorAll("button, input[type=submit], [role=button]") || []).find(b => 
+      visible(b) && /^\s*(?:save|upload|submit|confirm)\s*$/i.test((b.innerText || b.value || "").trim()) && b !== fileItBtn && b !== replaceBtn
+    );
+    if (saveBtn) {
+      console.log("[Verixa360 Assistant] Clicking save/upload confirmation button...");
+      saveBtn.click();
+      await sleep(1500);
+    }
+
+    setVerixaPill(`✓ Certificate Uploaded!`, "info");
+    return {
+      success: true,
+      message: `DL verification report attached and submitted successfully for ${gsmId}.`
+    };
+  } catch (err) {
+    setVerixaPill(`⚠️ Upload error: ${err.message}`, "err");
+    return { success: false, reason: `File attachment failed: ${err.message}` };
+  }
+}
+
 // Chrome Message Listener
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "PING_VERIXA" || request.type === "vxPing") {
@@ -382,6 +524,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   if (request.action === "SEARCH_AND_EXTRACT_GSM") {
     searchAndExtractGSM(request.gsm_id)
+      .then((res) => sendResponse(res))
+      .catch((err) => sendResponse({ success: false, reason: err.message }));
+    return true;
+  }
+  if (request.action === "UPLOAD_DL_CERTIFICATE") {
+    uploadDlCertificateToVerixa(request.pdfBase64, request.filename, request.gsmId)
       .then((res) => sendResponse(res))
       .catch((err) => sendResponse({ success: false, reason: err.message }));
     return true;

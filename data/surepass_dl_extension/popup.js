@@ -191,9 +191,9 @@ function updateUIFromBatch() {
 
   const recs = currentLocalBatch.records;
   const total = recs.length;
-  const verified = recs.filter(r => r.verification_status === "Verified").length;
+  const verified = recs.filter(r => r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded").length;
   const notVerified = recs.filter(r => r.verification_status === "Not Verified").length;
-  const otherDone = recs.filter(r => r.verification_status && !["Verified", "Not Verified", "Pending"].includes(r.verification_status)).length;
+  const otherDone = recs.filter(r => r.verification_status && !["Verified", "Verified & Uploaded", "Not Verified", "Pending"].includes(r.verification_status)).length;
   const pending = recs.filter(r => !r.verification_status || r.verification_status === "Pending").length;
   const completed = total - pending;
 
@@ -245,7 +245,7 @@ function renderRecordsTable() {
   tbody.innerHTML = filtered.map(r => {
     let color = "#64748B";
     let bg = "#F1F5F9";
-    if (r.verification_status === "Verified") { color = "#047857"; bg = "#ECFDF5"; }
+    if (r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded") { color = "#047857"; bg = "#ECFDF5"; }
     else if (r.verification_status === "Not Verified") { color = "#B45309"; bg = "#FFFBEB"; }
     else if (r.verification_status === "Not Found on Verixa" || r.verification_status === "Invalid Details" || r.verification_status === "Verification Error") { color = "#BE123C"; bg = "#FFF1F2"; }
 
@@ -520,6 +520,7 @@ function exportUpdatedExcel() {
     base["Verification Status"] = r.verification_status || "Pending";
     base["Verification Date"] = r.verification_date || "";
     base["Verification Remarks"] = r.remarks || "";
+    base["Verixa Certificate Upload"] = (r.verification_status === "Verified & Uploaded" || r.upload_status === "Uploaded") ? "Uploaded to Verixa" : (r.upload_status || "-");
     base["Report Filename"] = r.report_filename || "";
     base["Processing Status"] = r.verification_status ? "Completed" : "Pending";
     return base;
@@ -637,11 +638,11 @@ async function runAutomationLoop() {
         } catch (e) {}
 
         const currentUrl = verixaTab.url || "";
-        // Only navigate if on blank or login page
-        if (!currentUrl.includes("verixa360.com") && !currentUrl.includes("verixa360.in")) {
-          log("Opening Verixa 'Sent by desks' (https://verixa360.com/operations/sent)...", "info");
+        // If not on the Sent list page (e.g. still inside an /applications/... details view from previous driver), navigate back
+        if (!currentUrl.includes("/operations/sent")) {
+          log("Navigating to Verixa 'Sent by desks' (https://verixa360.com/operations/sent)...", "info");
           await chrome.tabs.update(verixaTab.id, { url: "https://verixa360.com/operations/sent" });
-          await sleep(3500);
+          await sleep(3000);
         }
       } else {
         log("⚠️ Verixa360 tab not open. Opening https://verixa360.com/operations/sent...", "warn");
@@ -817,10 +818,62 @@ async function runAutomationLoop() {
 
     log(`✓ Outcome: ${finalStatus} (${finalRemarks})`, finalStatus === "Verified" ? "info" : "warn");
 
-    // Official Surepass Report Download Confirmation
+    // Official Surepass Report Download Confirmation & Auto-Upload to Verixa360
     if (finalStatus === "Verified") {
       driver.report_download_status = "Downloaded";
       log(`📥 Official Surepass report PDF saved to Downloads/Surepass_DL_Reports/`, "info");
+
+      // Auto-upload DL Certificate back into Verixa under Verification results -> Driving licence certificate
+      let pdfToUpload = result.pdf_base64;
+      if (!pdfToUpload) {
+        // Query background script cache
+        try {
+          const bgPdf = await new Promise(resolve => {
+            chrome.runtime.sendMessage({ action: "GET_LATEST_SUREPASS_PDF" }, res => resolve(res));
+          });
+          if (bgPdf && bgPdf.success && bgPdf.pdfBase64) {
+            pdfToUpload = bgPdf.pdfBase64;
+          }
+        } catch (e) {}
+      }
+
+      if (pdfToUpload && verixaTab) {
+        log(`📤 [Verixa360] Uploading DL Certificate for ${driver.gsm_id}...`, "info");
+        try {
+          await chrome.tabs.update(verixaTab.id, { active: true });
+          await chrome.windows.update(verixaTab.windowId, { focused: true });
+          await sleep(600);
+        } catch (e) {}
+
+        let uploadRes = null;
+        try {
+          uploadRes = await new Promise((resolve, reject) => {
+            chrome.tabs.sendMessage(verixaTab.id, {
+              action: "UPLOAD_DL_CERTIFICATE",
+              pdfBase64: pdfToUpload,
+              filename: reportFilename,
+              gsmId: driver.gsm_id
+            }, res => {
+              if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+              resolve(res);
+            });
+          });
+        } catch (ue) {
+          uploadRes = { success: false, reason: ue.message };
+        }
+
+        if (uploadRes && uploadRes.success) {
+          log(`✓ [Verixa360] Certificate successfully uploaded for ${driver.gsm_id}!`, "info");
+          driver.verification_status = "Verified & Uploaded";
+          driver.remarks = "Verified on Surepass & DL Certificate uploaded to Verixa";
+          driver.upload_status = "Uploaded";
+        } else {
+          log(`⚠️ [Verixa360] Upload notice: ${uploadRes?.reason || "Pending manual upload"}`, "warn");
+          driver.verification_status = "Verified";
+          driver.remarks = `Verified on Surepass (${uploadRes?.reason || "Verixa upload pending"})`;
+          driver.upload_status = "Pending";
+        }
+      }
     }
 
     // Save updated queue to chrome.storage.local & live update Results Table

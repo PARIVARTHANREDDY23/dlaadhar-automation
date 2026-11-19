@@ -7,6 +7,35 @@ chrome.runtime.onInstalled.addListener(() => {
   }
 });
 
+// Cache the latest official Surepass report PDF in memory for auto-upload to Verixa
+let latestSurepassPdf = null; // { url, filename, base64, timestamp }
+
+// Listen for download creation to catch official Surepass PDF
+chrome.downloads.onCreated.addListener(async (item) => {
+  const isFromSurepass = item.url && (item.url.includes("surepass.app") || item.url.includes("surepass.io"));
+  const isPdf = (item.filename && item.filename.toLowerCase().endsWith(".pdf")) || item.mime === "application/pdf";
+
+  if (isFromSurepass || isPdf) {
+    try {
+      const resp = await fetch(item.url);
+      const blob = await resp.blob();
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        latestSurepassPdf = {
+          url: item.url,
+          filename: item.filename || "Surepass_DL_Report.pdf",
+          base64: reader.result,
+          timestamp: Date.now()
+        };
+        console.log(`[Background] Cached latest Surepass PDF (${blob.size} bytes)`);
+      };
+      reader.readAsDataURL(blob);
+    } catch (e) {
+      console.warn("[Background] Download stream capture notice:", e.message);
+    }
+  }
+});
+
 // Automatically route official Surepass PDF downloads to Downloads/Surepass_DL_Reports/
 chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
   const isFromSurepass = item.url && (item.url.includes("surepass.app") || item.url.includes("surepass.io"));
@@ -23,8 +52,32 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
   suggest();
 });
 
-// Listener for downloading files requested by popup (e.g. Exported Excel)
+// Listener for downloading files requested by popup and querying latest captured report
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "GET_LATEST_SUREPASS_PDF") {
+    // Return cached PDF if less than 90 seconds old
+    if (latestSurepassPdf && Date.now() - latestSurepassPdf.timestamp < 90000) {
+      sendResponse({ success: true, pdfBase64: latestSurepassPdf.base64, filename: latestSurepassPdf.filename });
+    } else {
+      sendResponse({ success: false });
+    }
+    return true;
+  }
+
+  if (request.action === "STORE_SUREPASS_PDF") {
+    if (request.pdfBase64) {
+      latestSurepassPdf = {
+        filename: request.filename || "Surepass_DL_Report.pdf",
+        base64: request.pdfBase64,
+        timestamp: Date.now()
+      };
+      sendResponse({ success: true });
+    } else {
+      sendResponse({ success: false });
+    }
+    return true;
+  }
+
   if (request.action === "DOWNLOAD_FILE") {
     const fileUrl = request.url;
     const filename = request.filename || `Export_${Date.now()}.xlsx`;

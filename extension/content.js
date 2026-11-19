@@ -5,6 +5,27 @@ console.log("[Surepass Assistant] Content script active on console.surepass.app"
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Intercept client-side created PDF blobs for automatic forwarding to Verixa
+let lastCapturedPdfBlob = null;
+try {
+  const origCreateObjectURL = URL.createObjectURL;
+  URL.createObjectURL = function(obj) {
+    if (obj instanceof Blob && (obj.type.includes("pdf") || obj.size > 2000)) {
+      lastCapturedPdfBlob = obj;
+    }
+    return origCreateObjectURL.apply(this, arguments);
+  };
+} catch (e) {}
+
+function blobToBase64(blob) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(blob);
+  });
+}
+
 // Helper: Format DOB for input (YYYY-MM-DD for date inputs, or DD-MM-YYYY for text inputs)
 function formatDobForInput(dobStr, inputType) {
   if (!dobStr) return "";
@@ -274,6 +295,8 @@ async function verifyDriverOnPage(driver) {
 
   // 5. If Verified, click the official Surepass "Download Report" button on the portal
   let surepassPdfTriggered = false;
+  let pdfBase64 = null;
+
   if (finalStatus === "Verified") {
     console.log("[Surepass Assistant] Verified! Locating official Surepass Download Report button...");
     await sleep(1500);
@@ -291,10 +314,40 @@ async function verifyDriverOnPage(driver) {
     }, 6000);
 
     if (dlBtn) {
+      // Check if button is an anchor with direct download link
+      const href = dlBtn.getAttribute("href") || dlBtn.href;
+      if (href && (href.startsWith("http") || href.startsWith("blob:") || href.startsWith("data:"))) {
+        try {
+          const res = await fetch(href, { credentials: "include" });
+          const b = await res.blob();
+          pdfBase64 = await blobToBase64(b);
+          console.log(`[Surepass Assistant] Directly fetched report PDF (${b.size} bytes)`);
+        } catch (e) {
+          console.warn("[Surepass Assistant] Direct fetch of report notice:", e.message);
+        }
+      }
+
       console.log(`[Surepass Assistant] Clicking official Surepass download button: "${dlBtn.innerText || 'Download'}"`);
       dlBtn.click();
       surepassPdfTriggered = true;
       await sleep(2000);
+
+      // Check if client-side blob hook caught the report
+      if (!pdfBase64 && lastCapturedPdfBlob) {
+        try {
+          pdfBase64 = await blobToBase64(lastCapturedPdfBlob);
+          console.log(`[Surepass Assistant] Captured in-memory blob report (${lastCapturedPdfBlob.size} bytes)`);
+        } catch (e) {}
+      }
+
+      // If we have base64, also store in background script for safety
+      if (pdfBase64) {
+        chrome.runtime.sendMessage({
+          action: "STORE_SUREPASS_PDF",
+          pdfBase64: pdfBase64,
+          filename: `${driver.gsm_id}_${driver.phone_number || "DL"}_DL_Report.pdf`
+        }).catch(() => {});
+      }
     } else {
       console.warn("[Surepass Assistant] Official Surepass download button not found on result card.");
     }
@@ -305,6 +358,7 @@ async function verifyDriverOnPage(driver) {
     status: finalStatus,
     remarks: remarks,
     pdf_downloaded: surepassPdfTriggered,
+    pdf_base64: pdfBase64,
     report_filename: `${driver.gsm_id}_${driver.phone_number || "DL"}_DL_Report.pdf`
   };
 }
