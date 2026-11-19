@@ -304,6 +304,9 @@ async function searchAndExtractGSM(gsmId) {
   // Step 3: Click the candidate row / candidate link (e.g. [SUHAL] or /applications/...)
   setVerixaPill(`🖱️ Clicking candidate row...`, "busy");
   try {
+    if (targetEl.tagName === 'A' && targetEl.target === '_blank') targetEl.target = '_self';
+    const childLink = targetEl.querySelector('a');
+    if (childLink && childLink.target === '_blank') childLink.target = '_self';
     if (targetEl.scrollIntoView) targetEl.scrollIntoView({ block: "center", behavior: "smooth" });
     targetEl.click();
   } catch (e) {
@@ -453,13 +456,45 @@ async function uploadDlCertificateToVerixa(pdfBase64, filename, gsmId) {
     }
   }
 
-  // Step 4: Find the file input element (<input type="file">)
-  let fileInput = dlContainer.querySelector('input[type="file"]');
-  if (!fileInput) {
-    // Look in parent or modal dialog
-    const parentBox = dlContainer.closest("div, form, section, body") || document.body;
-    fileInput = parentBox.querySelector('input[type="file"]') || document.querySelector('input[type="file"]');
+  // Step 4: Find the file input element specifically for Driving licence certificate
+  function findExactDlFileInput(container, chooseBtn, fileBtn) {
+    // 1. Direct child inside the DL container
+    let inp = container.querySelector('input[type="file"]');
+    if (inp) return inp;
+
+    // 2. Check label "for" attribute on buttons or inside container
+    const labels = [
+      chooseBtn?.getAttribute("for"),
+      fileBtn?.getAttribute("for"),
+      container.querySelector("label[for]")?.getAttribute("for")
+    ].filter(Boolean);
+    for (const id of labels) {
+      const el = document.getElementById(id);
+      if (el && el.type === "file") return el;
+    }
+
+    // 3. Check inside closest table row or fieldset
+    const row = container.closest("tr, [role=row], .row, fieldset") || container.parentElement;
+    if (row) {
+      const rowInputs = Array.from(row.querySelectorAll('input[type="file"]'));
+      if (rowInputs.length === 1) return rowInputs[0];
+    }
+
+    // 4. Proximity fallback: find file input vertically closest to DL container
+    const allInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+    if (allInputs.length > 0) {
+      const cRect = container.getBoundingClientRect();
+      allInputs.sort((a, b) => {
+        const aRect = a.getBoundingClientRect();
+        const bRect = b.getBoundingClientRect();
+        return Math.abs(aRect.top - cRect.top) - Math.abs(bRect.top - cRect.top);
+      });
+      return allInputs[0];
+    }
+    return null;
   }
+
+  const fileInput = findExactDlFileInput(dlContainer, chooseFileBtn, fileItBtn);
 
   if (!fileInput) {
     setVerixaPill(`⚠️ No file input found`, "err");

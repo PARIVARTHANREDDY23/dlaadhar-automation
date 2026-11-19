@@ -837,30 +837,42 @@ async function runAutomationLoop() {
         } catch (e) {}
       }
 
-      if (pdfToUpload && verixaTab) {
+      if (pdfToUpload) {
         log(`📤 [Verixa360] Uploading DL Certificate for ${driver.gsm_id}...`, "info");
-        try {
-          await chrome.tabs.update(verixaTab.id, { active: true });
-          await chrome.windows.update(verixaTab.windowId, { focused: true });
-          await sleep(600);
-        } catch (e) {}
 
-        let uploadRes = null;
+        // Verify verixaTab is still valid and reachable
         try {
-          uploadRes = await new Promise((resolve, reject) => {
-            chrome.tabs.sendMessage(verixaTab.id, {
-              action: "UPLOAD_DL_CERTIFICATE",
-              pdfBase64: pdfToUpload,
-              filename: reportFilename,
-              gsmId: driver.gsm_id
-            }, res => {
-              if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-              resolve(res);
-            });
-          });
-        } catch (ue) {
-          uploadRes = { success: false, reason: ue.message };
+          if (!verixaTab || !verixaTab.id) throw new Error("No tab cached");
+          await chrome.tabs.get(verixaTab.id);
+        } catch (te) {
+          const allTabsNow = await chrome.tabs.query({});
+          const foundV = allTabsNow.find(t => t.url && (t.url.includes("verixa360.com") || t.url.includes("verixa360.in")));
+          if (foundV) verixaTab = foundV;
         }
+
+        if (verixaTab) {
+          try {
+            await chrome.tabs.update(verixaTab.id, { active: true });
+            await chrome.windows.update(verixaTab.windowId, { focused: true });
+            await sleep(600);
+          } catch (e) {}
+
+          let uploadRes = null;
+          try {
+            uploadRes = await new Promise((resolve, reject) => {
+              chrome.tabs.sendMessage(verixaTab.id, {
+                action: "UPLOAD_DL_CERTIFICATE",
+                pdfBase64: pdfToUpload,
+                filename: reportFilename,
+                gsmId: driver.gsm_id
+              }, res => {
+                if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+                resolve(res);
+              });
+            });
+          } catch (ue) {
+            uploadRes = { success: false, reason: ue.message };
+          }
 
         if (uploadRes && uploadRes.success) {
           log(`✓ [Verixa360] Certificate successfully uploaded for ${driver.gsm_id}!`, "info");

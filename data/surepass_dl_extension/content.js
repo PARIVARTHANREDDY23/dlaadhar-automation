@@ -7,6 +7,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Intercept client-side created PDF blobs for automatic forwarding to Verixa
 let lastCapturedPdfBlob = null;
+let lastOpenedReportUrl = null;
+
 try {
   const origCreateObjectURL = URL.createObjectURL;
   URL.createObjectURL = function(obj) {
@@ -14,6 +16,16 @@ try {
       lastCapturedPdfBlob = obj;
     }
     return origCreateObjectURL.apply(this, arguments);
+  };
+} catch (e) {}
+
+try {
+  const origWindowOpen = window.open;
+  window.open = function(url) {
+    if (url && (url.includes("pdf") || url.includes("report") || url.includes("download") || url.includes("surepass"))) {
+      lastOpenedReportUrl = url;
+    }
+    return origWindowOpen.apply(this, arguments);
   };
 } catch (e) {}
 
@@ -337,6 +349,16 @@ async function verifyDriverOnPage(driver) {
         try {
           pdfBase64 = await blobToBase64(lastCapturedPdfBlob);
           console.log(`[Surepass Assistant] Captured in-memory blob report (${lastCapturedPdfBlob.size} bytes)`);
+        } catch (e) {}
+      }
+
+      // Check if window.open was triggered for the report
+      if (!pdfBase64 && lastOpenedReportUrl) {
+        try {
+          const res = await fetch(lastOpenedReportUrl, { credentials: "include" });
+          const b = await res.blob();
+          pdfBase64 = await blobToBase64(b);
+          console.log(`[Surepass Assistant] Fetched report from window.open URL (${b.size} bytes)`);
         } catch (e) {}
       }
 
