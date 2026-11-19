@@ -597,11 +597,28 @@ function updateUIFromBatch() {
     document.getElementById("txtProgressState").innerText = `${currentLocalBatch.filename || "Batch"} ready`;
   }
 
-  const pdfCount = recs.filter(r => r.report_download_status === "Downloaded").length;
+  const pdfCount = recs.filter(r => r.report_download_status === "Downloaded" || r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded").length;
   document.getElementById("txtSavedCount").innerText = `${pdfCount} PDF Saved`;
+
+  // Update ZIP download button count badge
+  updateZipButtonBadge();
 
   // Live update Results Table in Tab 3 on every record change
   renderRecordsTable();
+}
+
+// Update ZIP Button Ready Count
+function updateZipButtonBadge() {
+  const badge = document.getElementById("badgeZipCount");
+  if (!badge) return;
+  if (!currentLocalBatch || !currentLocalBatch.records) {
+    badge.innerText = "0 ready";
+    return;
+  }
+  const count = currentLocalBatch.records.filter(r => 
+    r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded" || r.card_details || r.pdf_base64
+  ).length;
+  badge.innerText = `${count} ready`;
 }
 
 // Render Results Table in Tab 3
@@ -611,6 +628,7 @@ function renderRecordsTable() {
 
   if (!currentLocalBatch || !currentLocalBatch.records || currentLocalBatch.records.length === 0) {
     tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:#94A3B8; padding:12px;">No records loaded yet.</td></tr>`;
+    updateZipButtonBadge();
     return;
   }
 
@@ -622,12 +640,14 @@ function renderRecordsTable() {
 
   if (filtered.length === 0) {
     tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:#94A3B8; padding:10px;">No matching records.</td></tr>`;
+    updateZipButtonBadge();
     return;
   }
 
   tbody.innerHTML = filtered.map(r => {
     let color = "#64748B";
     let bg = "#F1F5F9";
+    const hasReport = r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded" || r.card_details || r.pdf_base64;
     if (r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded") { color = "#047857"; bg = "#ECFDF5"; }
     else if (r.verification_status === "Not Verified") { color = "#B45309"; bg = "#FFFBEB"; }
     else if (r.verification_status === "Not Found on Verixa" || r.verification_status === "Invalid Details" || r.verification_status === "Verification Error") { color = "#BE123C"; bg = "#FFF1F2"; }
@@ -637,10 +657,17 @@ function renderRecordsTable() {
         <td style="color:#64748B; font-weight:700;">#${r.row_index}</td>
         <td style="font-weight:700; color:#0F172A; font-family:monospace;">${escapeHtml(r.gsm_id || "-")}</td>
         <td><span style="background:${bg}; color:${color}; font-size:9px; font-weight:700; padding:2px 5px; border-radius:4px;">${escapeHtml(r.verification_status || "Pending")}</span></td>
-        <td style="color:#64748B; font-size:9px;">${escapeHtml(r.remarks || "-")}</td>
+        <td style="color:#64748B; font-size:9px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:4px;">
+            <span>${escapeHtml(r.remarks || "-")}</span>
+            ${hasReport ? `<button type="button" onclick="window.downloadSingleReportPdf('${escapeHtml(r.gsm_id)}')" style="padding:1px 5px; font-size:8px; font-weight:700; background:#E0F2FE; color:#0284C7; border:1px solid #BAE6FD; border-radius:3px; cursor:pointer;" title="Download individual 4-Page PDF report">⬇️ PDF</button>` : ""}
+          </div>
+        </td>
       </tr>
     `;
   }).join("");
+
+  updateZipButtonBadge();
 }
 
 function escapeHtml(str) {
@@ -971,6 +998,153 @@ async function copyGSheetResults() {
   }
 }
 
+// Download ZIP containing all 4-Page verification report PDFs in current batch/quota
+async function downloadAllReportsZip() {
+  if (!currentLocalBatch || !currentLocalBatch.records || currentLocalBatch.records.length === 0) {
+    return alert("No batch loaded! Please load or paste GSM IDs in 'Upload & Mapping' first.");
+  }
+
+  const verifiedRecords = currentLocalBatch.records.filter(r => 
+    r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded" || r.card_details || r.pdf_base64
+  );
+
+  if (verifiedRecords.length === 0) {
+    return alert("No verification reports available in this batch yet!\n\nPlease start the verification loop on Tab 1 to verify drivers and generate reports.");
+  }
+
+  if (typeof JSZip === "undefined") {
+    return alert("JSZip library is not ready. Please reload the extension.");
+  }
+
+  const btnZip = document.getElementById("btnDownloadZip");
+  const origHtml = btnZip ? btnZip.innerHTML : "";
+  if (btnZip) {
+    btnZip.disabled = true;
+    btnZip.innerHTML = `<span>⏳ Preparing ZIP (0/${verifiedRecords.length})...</span>`;
+  }
+
+  log(`📦 Packing ZIP archive of ${verifiedRecords.length} verification reports...`, "info");
+
+  try {
+    const zip = new JSZip();
+    const batchNameClean = (currentLocalBatch.filename || currentLocalBatch.batch_name || "Quota").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const folderName = `Surepass_DL_Reports_${batchNameClean}`;
+    const reportFolder = zip.folder(folderName);
+
+    // Add a consolidated Verification_Summary.csv inside the ZIP
+    let csvContent = "Row,GSM ID,DL Number,Phone Number,Candidate Name,Verification Status,Verification Date,Remarks,Report Filename\n";
+
+    let idx = 0;
+    for (const r of verifiedRecords) {
+      idx++;
+      if (btnZip) {
+        btnZip.innerHTML = `<span>⏳ Zipping ${idx}/${verifiedRecords.length}: ${r.gsm_id}...</span>`;
+      }
+
+      const filename = `${r.gsm_id}_${r.phone_number || "DL"}_DL_Report.pdf`;
+
+      // Get or re-generate the full 4-page PDF
+      let pdfUri = r.pdf_base64;
+      if (!pdfUri) {
+        pdfUri = generateSurepassReportPdf(r, r.card_details || {});
+      }
+
+      if (pdfUri) {
+        // Strip data:application/pdf;...;base64,
+        const base64Data = pdfUri.includes(",") ? pdfUri.split(",")[1] : pdfUri;
+        reportFolder.file(filename, base64Data, { base64: true });
+      }
+
+      csvContent += `"${r.row_index}","${r.gsm_id || ''}","${r.dl_number || ''}","${r.phone_number || ''}","${r.driver_name || ''}","${r.verification_status || ''}","${r.verification_date || ''}","${(r.remarks || '').replace(/"/g, '""')}","${filename}"\n`;
+
+      await sleep(25);
+    }
+
+    reportFolder.file("Verification_Summary.csv", csvContent);
+
+    if (btnZip) btnZip.innerHTML = `<span>📦 Compressing ZIP archive...</span>`;
+
+    const zipBlob = await zip.generateAsync({
+      type: "blob",
+      compression: "DEFLATE",
+      compressionOptions: { level: 6 }
+    });
+
+    const zipFilename = `Surepass_DL_Reports_${batchNameClean}_${Date.now()}.zip`;
+    const reader = new FileReader();
+
+    reader.onloadend = () => {
+      const dataUri = reader.result;
+      chrome.runtime.sendMessage({
+        action: "DOWNLOAD_FILE",
+        url: dataUri,
+        filename: zipFilename,
+        subfolder: "" // Saves directly into Downloads folder
+      }, (res) => {
+        if (chrome.runtime.lastError || !res || !res.success) {
+          // Native browser anchor fallback
+          const blobUrl = URL.createObjectURL(zipBlob);
+          const a = document.createElement("a");
+          a.href = blobUrl;
+          a.download = zipFilename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+        }
+      });
+    };
+    reader.readAsDataURL(zipBlob);
+
+    log(`✓ ZIP exported successfully: ${zipFilename} (${verifiedRecords.length} reports)`, "info");
+    if (btnZip) {
+      btnZip.innerHTML = `<span>✓ Downloaded ZIP (${verifiedRecords.length})</span>`;
+      setTimeout(() => {
+        btnZip.disabled = false;
+        btnZip.innerHTML = origHtml;
+        updateZipButtonBadge();
+      }, 3000);
+    }
+  } catch (err) {
+    console.error("ZIP creation failed:", err);
+    alert(`Could not create ZIP: ${err.message}`);
+    if (btnZip) {
+      btnZip.disabled = false;
+      btnZip.innerHTML = origHtml;
+    }
+  }
+}
+
+// Download single candidate's 4-Page verification report PDF directly
+function downloadSingleReportPdf(gsmId) {
+  if (!currentLocalBatch || !currentLocalBatch.records) return;
+  const r = currentLocalBatch.records.find(d => d.gsm_id === gsmId);
+  if (!r) return;
+
+  let pdfUri = r.pdf_base64 || generateSurepassReportPdf(r, r.card_details || {});
+  if (!pdfUri) {
+    return alert(`Could not generate PDF for ${gsmId}.`);
+  }
+
+  const filename = `${r.gsm_id}_${r.phone_number || "DL"}_DL_Report.pdf`;
+  chrome.runtime.sendMessage({
+    action: "DOWNLOAD_FILE",
+    url: pdfUri,
+    filename: `Surepass_DL_Reports/${filename}`
+  }, (res) => {
+    if (chrome.runtime.lastError || !res || !res.success) {
+      const a = document.createElement("a");
+      a.href = pdfUri;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+  });
+}
+window.downloadSingleReportPdf = downloadSingleReportPdf;
+window.downloadAllReportsZip = downloadAllReportsZip;
+
 // Backend Server Status (Optional sync)
 async function getBackendUrl() {
   return new Promise((resolve) => {
@@ -1218,6 +1392,7 @@ async function runAutomationLoop() {
     driver.verification_date = nowIso;
     driver.remarks = finalRemarks;
     driver.report_filename = reportFilename;
+    driver.card_details = result.card_details || driver.card_details || {};
 
     log(`✓ Outcome: ${finalStatus} (${finalRemarks})`, finalStatus === "Verified" ? "info" : "warn");
 
@@ -1253,6 +1428,7 @@ async function runAutomationLoop() {
       }
 
       if (pdfToUpload) {
+        driver.pdf_base64 = pdfToUpload;
         log(`📤 [Verixa360] Uploading DL Certificate for ${driver.gsm_id}...`, "info");
 
         // Verify verixaTab is still valid and reachable
@@ -1400,8 +1576,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Export Buttons
   const btnExpExcel = document.getElementById("btnExportExcel");
   const btnCopyGS = document.getElementById("btnCopyGSheet");
+  const btnZip = document.getElementById("btnDownloadZip");
   if (btnExpExcel) btnExpExcel.onclick = exportUpdatedExcel;
   if (btnCopyGS) btnCopyGS.onclick = copyGSheetResults;
+  if (btnZip) btnZip.onclick = downloadAllReportsZip;
 
   // Filter Search in Tab 3
   const txtSearch = document.getElementById("txtFilterSearch");

@@ -219,14 +219,20 @@
   <div id="tabSectionExport" style="display:none;">
     <!-- EXPORT ACTIONS -->
     <div class="card" style="background:#F0FDF4; border-color:#BBF7D0;">
-      <div class="card-title" style="color:#166534;">Export Completed Records</div>
-      <p style="font-size:10px; color:#166534; margin-bottom:8px;">Export all original rows with verification status, dates, and remarks populated.</p>
-      <div style="display:flex; gap:6px;">
+      <div class="card-title" style="color:#166534;">Export Completed Records & Reports</div>
+      <p style="font-size:10px; color:#166534; margin-bottom:8px;">Export verified data as Excel, copy to Google Sheets, or download all 4-page verification report PDFs as a ZIP package.</p>
+      <div style="display:flex; gap:6px; margin-bottom:6px;">
         <button id="btnExportExcel" class="btn btn-primary" style="flex:1;">
           <span>📥 Export Excel (.xlsx)</span>
         </button>
         <button id="btnCopyGSheet" class="btn btn-outline" style="flex:1;">
           <span>📋 Copy G-Sheet (Ctrl+V)</span>
+        </button>
+      </div>
+      <div style="display:flex; gap:6px;">
+        <button id="btnDownloadZip" class="btn" style="flex:1; background:#0284C7; color:#fff; border:none; display:flex; align-items:center; justify-content:center; gap:6px; font-weight:600; padding:6px 10px; border-radius:4px; cursor:pointer;">
+          <span>📦 Download All Reports ZIP (.zip)</span>
+          <span id="badgeZipCount" style="background:rgba(255,255,255,0.25); border-radius:10px; padding:1px 6px; font-size:9px;">0 ready</span>
         </button>
       </div>
     </div>
@@ -269,6 +275,7 @@
   <!-- BUNDLED LIBRARIES -->
   <script src="libs/xlsx.full.min.js"></script>
   <script src="libs/jspdf.umd.min.js"></script>
+  <script src="libs/jszip.min.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
