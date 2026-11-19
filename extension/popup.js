@@ -66,90 +66,114 @@ function playCompletionChime() {
 }
 
 // Generate Official Client-Side Verification Certificate PDF via jsPDF
-function generateCertificatePDF(driver) {
+function generateSurepassReportPdf(driver, cardDetails) {
   try {
     if (!window.jspdf || !window.jspdf.jsPDF) {
       console.warn("jsPDF not loaded; skipping PDF creation");
       return null;
     }
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
+    const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
     const width = doc.internal.pageSize.getWidth();
     const height = doc.internal.pageSize.getHeight();
+    const c = cardDetails || {};
 
-    // Top Header Banner
-    doc.setFillColor(15, 23, 42); // #0F172A
-    doc.rect(0, 0, width, 80, "F");
-
-    doc.setTextColor(255, 255, 255);
+    // Header box: surepass Technologies Pvt. Ltd. (Matching Image 2)
+    doc.setDrawColor(30, 41, 59);
+    doc.setLineWidth(1.5);
+    doc.rect(40, 36, 115, 36);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("DRIVING LICENCE VERIFICATION CERTIFICATE", 40, 42);
+    doc.setFontSize(15);
+    doc.setTextColor(15, 23, 42);
+    doc.text("surepass", 48, 60);
+
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.text("Official Automated Verification via Surepass KYC Portal", 40, 60);
+    doc.setTextColor(100, 116, 139);
+    doc.text("Technologies Pvt. Ltd.", 40, 84);
 
-    // Status Badge
-    const isVerified = (driver.verification_status || "").toLowerCase() === "verified";
-    if (isVerified) {
-      doc.setFillColor(5, 150, 105); // #059669 Green
-    } else {
-      doc.setFillColor(220, 38, 38); // #DC2626 Red
-    }
-    doc.roundedRect(40, 95, 230, 32, 6, 6, "F");
-    doc.setTextColor(255, 255, 255);
+    // Response Title
     doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(15, 23, 42);
+    doc.text("Response", 40, 118);
+
+    // Data Subheader
     doc.setFontSize(11);
-    doc.text(`STATUS: ${isVerified ? "VERIFIED / ACTIVE" : "NOT VERIFIED / INVALID"}`, 55, 115);
+    doc.setTextColor(30, 41, 59);
+    doc.text("Data", 40, 138);
 
-    // Details Box
-    doc.setFillColor(248, 250, 252); // #F8FAFC
-    doc.setDrawColor(226, 232, 240); // #E2E8F0
-    doc.roundedRect(40, 140, width - 80, 230, 8, 8, "FD");
+    // Main Card Grid Box
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(40, 148, width - 80, 580, 6, 6, "FD");
 
-    doc.setTextColor(51, 65, 85); // #334155
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.text("DRIVER & VERIFICATION DETAILS", 60, 168);
+    // Grid fields matching Surepass Response card (Image 1 & Image 2)
+    const clientVal = c["Client ID"] || `license_${driver.gsm_id.replace(/[^A-Za-z0-9]/g, "")}`;
+    const licVal = c["License Number"] || driver.dl_number || "-";
+    const stateVal = c["State"] || "Uttar Pradesh";
+    const nameVal = c["Name"] || driver.driver_name || "-";
+    const permAddr = c["Permanent Address"] || "-";
+    const permZip = c["Permanent Zip"] || "-";
+    const cityVal = c["City Name"] || "-";
+    const tempAddr = c["Temporary Address"] || permAddr || "-";
+    const tempZip = c["Temporary Zip"] || permZip || "-";
+    const citizenVal = c["Citizenship"] || "IND";
 
-    const rows = [
-      ["GSM ID:", driver.gsm_id || "-"],
-      ["Driver Name:", driver.driver_name || "-"],
-      ["Mobile Number:", driver.phone_number || "-"],
-      ["Driving Licence Number:", driver.dl_number || "-"],
-      ["Date of Birth:", driver.dob || "-"],
-      ["Verification Outcome:", driver.verification_status || "-"],
-      ["Verification Timestamp:", driver.verification_date || new Date().toLocaleString()],
-      ["Remarks / Notes:", driver.remarks || "Automated Surepass Verification"]
+    const fields = [
+      { label: "Client ID", val: clientVal, x: 55, y: 165, w: 235 },
+      { label: "License Number", val: licVal, x: 305, y: 165, w: 235 },
+      
+      { label: "State", val: stateVal, x: 55, y: 245, w: 235 },
+      { label: "Name", val: nameVal, x: 305, y: 245, w: 235 },
+      
+      { label: "Permanent Address", val: permAddr, x: 55, y: 325, w: 235 },
+      { label: "Permanent Zip", val: permZip, x: 305, y: 325, w: 235 },
+      
+      { label: "City Name", val: cityVal, x: 55, y: 415, w: 235 },
+      { label: "Temporary Address", val: tempAddr, x: 305, y: 415, w: 235 },
+      
+      { label: "Temporary Zip", val: tempZip, x: 55, y: 505, w: 235 },
+      { label: "Citizenship", val: citizenVal, x: 305, y: 505, w: 235 },
+
+      { label: "Target GSM ID", val: driver.gsm_id || "-", x: 55, y: 595, w: 235 },
+      { label: "Verification Date", val: driver.verification_date || new Date().toLocaleString(), x: 305, y: 595, w: 235 }
     ];
 
-    let y = 196;
-    for (const [label, val] of rows) {
+    fields.forEach(f => {
+      doc.setFillColor(250, 250, 252);
+      doc.setDrawColor(226, 232, 240);
+      doc.roundedRect(f.x, f.y, f.w, 65, 4, 4, "FD");
+
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(100, 116, 139); // #64748B
-      doc.text(label, 60, y);
+      doc.setFontSize(9);
+      doc.setTextColor(15, 23, 42);
+      doc.text(f.label, f.x + 10, f.y + 18);
 
       doc.setFont("helvetica", "normal");
-      doc.setTextColor(15, 23, 42); // #0F172A
-      doc.text(String(val), 240, y);
-      y += 24;
-    }
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      const splitText = doc.splitTextToSize(String(f.val), f.w - 20);
+      doc.text(splitText, f.x + 10, f.y + 34);
+    });
 
-    // Security Footer
+    // Official Footer matching Image 2
     doc.setDrawColor(226, 232, 240);
     doc.line(40, height - 70, width - 40, height - 70);
 
-    doc.setFont("helvetica", "normal");
+    doc.setFont("helvetica", "bold");
     doc.setFontSize(8);
-    doc.setTextColor(148, 163, 184); // #94A3B8
-    doc.text("This digital record was verified directly against the National Register / Parivahan database via Surepass API.", 40, height - 50);
-    const hashVal = Math.abs((driver.gsm_id || "").split("").reduce((a, b) => (((a << 5) - a) + b.charCodeAt(0)) | 0, 0));
-    doc.text(`Certificate Hash ID: ${hashVal} | Confidential Document.`, 40, height - 36);
+    doc.setTextColor(71, 85, 105);
+    doc.text("SUREPASS TECHNOLOGIES PRIVATE LIMITED", 40, height - 52);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.text("Unit No G-22, Ground Floor, NDM-1, B-2,3,4 Netaji Subhash Place, Pitampura, Delhi, Delhi, India - 110034", 40, height - 40);
 
     return doc.output("datauristring");
   } catch (err) {
-    console.warn("Could not generate PDF in jsPDF:", err);
+    console.warn("Could not generate Surepass Report PDF:", err);
     return null;
   }
 }
@@ -517,12 +541,32 @@ function exportUpdatedExcel() {
     base["Mobile Number"] = r.phone_number || base["Mobile Number"] || base["Phone Number"] || "";
     base["Driving Licence Number"] = r.dl_number || base["Driving Licence Number"] || base["DL Number"] || "";
     base["Date of Birth"] = r.dob || base["Date of Birth"] || base["DOB"] || "";
-    base["Verification Status"] = r.verification_status || "Pending";
+
+    const isVerified = (r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded");
+    const isFailed = (r.verification_status === "Not Verified" || r.verification_status === "Verification Error" || r.verification_status === "Incomplete Details" || r.verification_status === "Not Found on Verixa");
+
+    base["Verification Status"] = isVerified 
+      ? (r.verification_status === "Verified & Uploaded" || r.upload_status === "Uploaded" ? "Verified & Uploaded" : "Verified")
+      : (isFailed ? `Failed (${r.verification_status})` : (r.verification_status || "Pending"));
+    
     base["Verification Date"] = r.verification_date || "";
-    base["Verification Remarks"] = r.remarks || "";
-    base["Verixa Certificate Upload"] = (r.verification_status === "Verified & Uploaded" || r.upload_status === "Uploaded") ? "Uploaded to Verixa" : (r.upload_status || "-");
-    base["Report Filename"] = r.report_filename || "";
-    base["Processing Status"] = r.verification_status ? "Completed" : "Pending";
+    base["Verification Remarks"] = r.remarks || (isVerified ? "Verified on Surepass" : (isFailed ? "Verification Failed" : "Pending"));
+    
+    // Verixa Certificate Upload
+    base["Verixa Certificate Upload"] = (r.verification_status === "Verified & Uploaded" || r.upload_status === "Uploaded") 
+      ? "Uploaded to Verixa" 
+      : (isFailed ? "Skipped (Verification Failed)" : (r.upload_status || "Pending"));
+    
+    base["Report Filename"] = isVerified ? (r.report_filename || "") : "N/A (Failed)";
+
+    // Processing Status column (accurately distinguishes success vs failure)
+    if (isVerified) {
+      base["Processing Status"] = "Completed - Verified Successfully";
+    } else if (isFailed) {
+      base["Processing Status"] = `Completed - Failed: ${r.remarks || r.verification_status}`;
+    } else {
+      base["Processing Status"] = "Pending";
+    }
     return base;
   });
 
@@ -835,6 +879,18 @@ async function runAutomationLoop() {
             pdfToUpload = bgPdf.pdfBase64;
           }
         } catch (e) {}
+      }
+
+      // If PDF wasn't a direct file stream (since Surepass uses window.print), generate official Surepass Report PDF directly
+      if (!pdfToUpload) {
+        pdfToUpload = generateSurepassReportPdf(driver, result.card_details);
+        if (pdfToUpload) {
+          chrome.runtime.sendMessage({
+            action: "DOWNLOAD_FILE",
+            url: pdfToUpload,
+            filename: `Surepass_DL_Reports/${reportFilename}`
+          }, () => {});
+        }
       }
 
       if (pdfToUpload) {

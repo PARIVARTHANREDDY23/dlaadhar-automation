@@ -38,26 +38,55 @@ function blobToBase64(blob) {
   });
 }
 
-// Helper: Format DOB for input (YYYY-MM-DD for date inputs, or DD-MM-YYYY for text inputs)
+// Helper: Format DOB for input (YYYY-MM-DD for date inputs, or DD MM YYYY for text inputs)
 function formatDobForInput(dobStr, inputType) {
   if (!dobStr) return "";
   const cleaned = dobStr.trim();
   
-  // YYYY-MM-DD
+  let day = "", month = "", year = "";
+
+  // 1. Format: YYYY-MM-DD or YYYY/MM/DD
   const ymd = cleaned.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
   if (ymd) {
-    if (inputType === "date") return `${ymd[1]}-${ymd[2].padStart(2, "0")}-${ymd[3].padStart(2, "0")}`;
-    return `${ymd[3].padStart(2, "0")}-${ymd[2].padStart(2, "0")}-${ymd[1]}`;
+    year = ymd[1];
+    month = ymd[2].padStart(2, "0");
+    day = ymd[3].padStart(2, "0");
+  } else {
+    // 2. Format: DD-MM-YYYY or DD/MM/YYYY or DD MM YYYY
+    const dmy = cleaned.match(/^(\d{1,2})[-/.\s](\d{1,2})[-/.\s](\d{4})$/);
+    if (dmy) {
+      day = dmy[1].padStart(2, "0");
+      month = dmy[2].padStart(2, "0");
+      year = dmy[3];
+    }
   }
 
-  // DD-MM-YYYY
-  const dmy = cleaned.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
-  if (dmy) {
-    if (inputType === "date") return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
-    return `${dmy[1].padStart(2, "0")}-${dmy[2].padStart(2, "0")}-${dmy[3]}`;
+  if (day && month && year) {
+    if (inputType === "date") return `${year}-${month}-${day}`;
+    // Surepass input takes DD MM YYYY (space separated)
+    return `${day} ${month} ${year}`;
   }
 
   return cleaned;
+}
+
+// Extract verified fields from the Surepass Response Card
+function extractSurepassCardDetails() {
+  const details = {};
+  const allEl = Array.from(document.querySelectorAll("div, span, p, td, b"));
+  const fields = ["Client ID", "License Number", "State", "Name", "Permanent Address", "Permanent Zip", "Temporary Address", "Temporary Zip", "City Name", "Citizenship"];
+  
+  fields.forEach(f => {
+    const el = allEl.find(e => e.children.length === 0 && (e.innerText || "").trim().toLowerCase() === f.toLowerCase());
+    if (el) {
+      const parent = el.parentElement;
+      const sibling = el.nextElementSibling || parent?.querySelector("div:last-child, p:last-child, span:last-child");
+      if (sibling && sibling !== el) {
+        details[f] = sibling.innerText.trim();
+      }
+    }
+  });
+  return details;
 }
 
 // Find element across document, iframes, and shadow roots
@@ -210,8 +239,16 @@ async function verifyDriverOnPage(driver) {
 
     if (dobInput) {
       const formattedDob = formatDobForInput(driver.dob, dobInput.type);
+      console.log(`[Surepass Assistant] Entering DOB: "${formattedDob}"`);
       setInputValue(dobInput, formattedDob);
-      await sleep(400);
+      await sleep(300);
+
+      // If the field rejected spaces or cleared, fallback with hyphens
+      if (!dobInput.value || dobInput.value.length < 6) {
+        const hyphenDob = formattedDob.replace(/\s+/g, "-");
+        setInputValue(dobInput, hyphenDob);
+        await sleep(200);
+      }
     }
   }
 
@@ -305,13 +342,25 @@ async function verifyDriverOnPage(driver) {
     remarks = "Verification response timeout from Surepass portal";
   }
 
-  // 5. If Verified, click the official Surepass "Download Report" button on the portal
+  // 5. If Verified, extract card details and locate download trigger
   let surepassPdfTriggered = false;
   let pdfBase64 = null;
+  let cardDetails = null;
 
   if (finalStatus === "Verified") {
-    console.log("[Surepass Assistant] Verified! Locating official Surepass Download Report button...");
-    await sleep(1500);
+    console.log("[Surepass Assistant] Verified! Extracting Response card details and locating Download button...");
+    await sleep(1200);
+
+    // Extract all structured fields from the verified card (Image 1)
+    cardDetails = extractSurepassCardDetails();
+    console.log("[Surepass Assistant] Extracted Card Details:", cardDetails);
+
+    // Suppress blocking native window.print modal (Image 2) so automation continues smoothly
+    try {
+      window.print = function() {
+        console.log("[Surepass Assistant] window.print cleanly intercepted!");
+      };
+    } catch (e) {}
 
     const dlBtn = await waitForElement(() => {
       const allButtons = Array.from(document.querySelectorAll("button, a, [role='button']")).filter(btn => {
@@ -342,7 +391,7 @@ async function verifyDriverOnPage(driver) {
       console.log(`[Surepass Assistant] Clicking official Surepass download button: "${dlBtn.innerText || 'Download'}"`);
       dlBtn.click();
       surepassPdfTriggered = true;
-      await sleep(2000);
+      await sleep(1500);
 
       // Check if client-side blob hook caught the report
       if (!pdfBase64 && lastCapturedPdfBlob) {
@@ -381,6 +430,7 @@ async function verifyDriverOnPage(driver) {
     remarks: remarks,
     pdf_downloaded: surepassPdfTriggered,
     pdf_base64: pdfBase64,
+    card_details: cardDetails,
     report_filename: `${driver.gsm_id}_${driver.phone_number || "DL"}_DL_Report.pdf`
   };
 }
