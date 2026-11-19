@@ -74,18 +74,45 @@ function formatDobForInput(dobStr, inputType) {
 function extractSurepassCardDetails() {
   const details = {};
   const allEl = Array.from(document.querySelectorAll("div, span, p, td, b"));
-  const fields = ["Client ID", "License Number", "State", "Name", "Permanent Address", "Permanent Zip", "Temporary Address", "Temporary Zip", "City Name", "Citizenship"];
+  const fields = [
+    "Client ID", "License Number", "State", "Name", 
+    "Permanent Address", "Permanent Zip", "Temporary Address", 
+    "Temporary Zip", "City Name", "Citizenship"
+  ];
   
   fields.forEach(f => {
     const el = allEl.find(e => e.children.length === 0 && (e.innerText || "").trim().toLowerCase() === f.toLowerCase());
     if (el) {
       const parent = el.parentElement;
       const sibling = el.nextElementSibling || parent?.querySelector("div:last-child, p:last-child, span:last-child");
-      if (sibling && sibling !== el) {
+      if (sibling && sibling !== el && sibling.innerText.trim()) {
         details[f] = sibling.innerText.trim();
+      } else if (parent && parent.innerText) {
+        // Fallback: extract line following label
+        const lines = parent.innerText.split("\n").map(s => s.trim()).filter(Boolean);
+        const idx = lines.findIndex(l => l.toLowerCase() === f.toLowerCase());
+        if (idx !== -1 && lines[idx + 1]) {
+          details[f] = lines[idx + 1];
+        }
       }
     }
   });
+
+  // Also check full Response block text if any field is missing
+  const responseBlock = Array.from(document.querySelectorAll("div, section")).find(d => 
+    (d.innerText || "").includes("Response") && (d.innerText || "").includes("License Number")
+  );
+  if (responseBlock) {
+    const blockText = responseBlock.innerText;
+    fields.forEach(f => {
+      if (!details[f]) {
+        const re = new RegExp(f + "\\s*\\n\\s*([^\\n]+)", "i");
+        const m = blockText.match(re);
+        if (m && m[1]) details[f] = m[1].trim();
+      }
+    });
+  }
+
   return details;
 }
 
@@ -354,15 +381,18 @@ async function verifyDriverOnPage(driver) {
       break;
     }
 
-    // C. Check for Live Success
-    const hasClientId = bodyText.includes('"client_id"') || bodyText.includes("client_id");
-    const hasLicenseNum = bodyText.includes('"license_number"') || bodyText.includes("license_number");
-    const hasState = bodyText.includes('"state"') || bodyText.includes("state");
+    // C. Check for Live Success (Response Card or 200 Success status)
+    const hasResponseCard = (bodyLower.includes("response") || bodyLower.includes("data")) && 
+                            (bodyLower.includes("client id") || bodyLower.includes("license number") || bodyLower.includes("permanent address"));
     const hasSuccessBadge = (bodyLower.includes("200") && (bodyLower.includes("success") || bodyLower.includes("ok"))) || bodyText.includes('"status_code": 200');
     const hasActiveDetails = bodyLower.includes("dl details found") || bodyLower.includes("status: active") || bodyLower.includes("verification successful") || bodyLower.includes("status: valid");
-    const hasDriverDl = (cleanDl && bodyText.includes(cleanDl)) || (rawDl && bodyText.includes(rawDl));
+    const hasDriverDl = (cleanDl && (bodyText.includes(cleanDl) || bodyLower.includes(cleanDl.toLowerCase()))) || 
+                        (rawDl && (bodyText.includes(rawDl) || bodyLower.includes(rawDl.toLowerCase())));
+    const hasDownloadBtn = Array.from(document.querySelectorAll("button, a, [role='button']")).some(b => 
+      /download/i.test(b.innerText || "") && b.offsetParent !== null
+    );
 
-    if (hasClientId || (hasLicenseNum && hasState) || (hasSuccessBadge && hasDriverDl) || (hasActiveDetails && hasDriverDl)) {
+    if ((hasResponseCard && (hasDriverDl || hasDownloadBtn)) || (hasSuccessBadge && hasDriverDl) || (hasActiveDetails && hasDriverDl)) {
       finalStatus = "Verified";
       remarks = "Driver Licence Verified Successfully (Surepass Active)";
       break;

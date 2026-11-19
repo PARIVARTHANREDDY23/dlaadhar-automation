@@ -215,10 +215,15 @@ function extractDetailsFromCandidateSection(targetEl, gsmId) {
 
   // 1. Driving Licence Number: MUST follow "Driving licence" / "DL" label directly!
   // Prevents picking up Acknowledgement / Application numbers like AR896219142537
-  const dlDirectMatch = text.match(/(?:driving\s*licen[cs]e|licen[cs]e\s*no|\bdl\s*(?:no|number)?)\s*[:\-]?\s*([A-Z]{2}[- ]?[0-9]{11,14})/i) ||
-                        text.match(/(?:driving\s*licen[cs]e|licen[cs]e\s*no|\bdl\b)[^A-Z0-9]*([A-Z]{2}[- ]?[0-9]{2}[- ]?[0-9]{4}[- ]?[0-9]{5,7})/i);
+  const dlDirectMatch = text.match(/(?:driving\s*licen[cs]e|licen[cs]e\s*no|\bdl\s*(?:no|number)?)\s*[:\-]?\s*([A-Z]{2}[0-9\s-]{11,18})/i) ||
+                        text.match(/(?:driving\s*licen[cs]e|licen[cs]e\s*no|\bdl\b)[^A-Z0-9]*([A-Z]{2}[0-9\s-]{11,18})/i);
   if (dlDirectMatch) {
-    dlNumber = dlDirectMatch[1].replace(/[\s-]/g, "").toUpperCase();
+    const rawMatch = dlDirectMatch[1];
+    const cleanedDigitsOnly = rawMatch.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+    const validDl = cleanedDigitsOnly.match(/^([A-Z]{2}[0-9]{11,14})/);
+    if (validDl) {
+      dlNumber = validDl[1];
+    }
   }
 
   // 2. Date of Birth: MUST follow "Date of birth" / "DOB" label directly!
