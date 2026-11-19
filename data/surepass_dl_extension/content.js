@@ -73,11 +73,14 @@ function formatDobForInput(dobStr, inputType) {
 // Extract verified fields from the Surepass Response Card
 function extractSurepassCardDetails() {
   const details = {};
-  const allEl = Array.from(document.querySelectorAll("div, span, p, td, b"));
+  const allEl = Array.from(document.querySelectorAll("div, span, p, td, b, th, strong"));
   const fields = [
     "Client ID", "License Number", "State", "Name", 
     "Permanent Address", "Permanent Zip", "Temporary Address", 
-    "Temporary Zip", "City Name", "Citizenship"
+    "Temporary Zip", "City Name", "Citizenship",
+    "Father Name", "Father/Husband Name", "DOB", "Date of Birth",
+    "Gender", "Blood Group", "Badge Number", "Class of Vehicle",
+    "COV", "Issue Date", "Valid Till", "Non Transport", "Transport"
   ];
   
   fields.forEach(f => {

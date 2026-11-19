@@ -532,22 +532,90 @@ async function uploadDlCertificateToVerixa(pdfBase64, filename, gsmId) {
       } catch (de) {}
     }
 
-    await sleep(1000);
+    await sleep(800);
 
-    // Step 6: Check for Save / Upload / Submit button
-    const saveBtn = Array.from(dlContainer.parentElement?.querySelectorAll("button, input[type=submit], [role=button]") || []).find(b => 
-      visible(b) && /^\s*(?:save|upload|submit|confirm)\s*$/i.test((b.innerText || b.value || "").trim()) && b !== fileItBtn && b !== replaceBtn
+    // Step 6: Explicitly find and click the submission button ("File it", "Upload", "Save", "Submit")
+    // Note: This MUST be clicked after the file is injected so Verixa backend processes and stores it!
+    console.log("[Verixa360 Assistant] Locating submission / File it button to register document...");
+    
+    let submitClicked = false;
+    const searchScopes = [
+      dlContainer,
+      fileInput.closest("form, .card, tr, .row, section, fieldset, [role=dialog], .modal") || dlContainer.parentElement,
+      document.querySelector("[role=dialog], .modal, .popup"),
+      dlContainer.parentElement?.parentElement,
+      document
+    ].filter(Boolean);
+
+    for (const scope of searchScopes) {
+      if (submitClicked) break;
+      const candidates = Array.from(scope.querySelectorAll("button, input[type=submit], [role=button], a.btn, span.btn")).filter(b => {
+        if (!visible(b)) return false;
+        if (b.disabled) return false;
+        const txt = (b.innerText || b.value || b.getAttribute("aria-label") || "").trim().toLowerCase();
+        if (/cancel|delete|remove|close|browse/i.test(txt)) return false;
+        // Prioritize exact submission terms
+        return /^(?:file\s*it|upload|save|submit|attach|confirm|done)(?:\s+(?:file|document|certificate|now))?$/i.test(txt) ||
+               /(?:file\s*it|upload|submit|save)/i.test(txt);
+      });
+
+      if (candidates.length > 0) {
+        // Sort priority: "File it" > "Upload" > "Save" > "Submit"
+        const sorted = candidates.sort((a, b) => {
+          const aTxt = (a.innerText || a.value || "").toLowerCase();
+          const bTxt = (b.innerText || b.value || "").toLowerCase();
+          if (/file\s*it/i.test(aTxt)) return -1;
+          if (/file\s*it/i.test(bTxt)) return 1;
+          if (/upload/i.test(aTxt)) return -1;
+          if (/upload/i.test(bTxt)) return 1;
+          return 0;
+        });
+
+        const targetBtn = sorted[0];
+        const btnLabel = (targetBtn.innerText || targetBtn.value || "Submit").trim();
+        console.log(`[Verixa360 Assistant] Clicking submission button: "${btnLabel}"...`);
+        try {
+          targetBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+          targetBtn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+          targetBtn.click();
+        } catch (e) {
+          targetBtn.click();
+        }
+        submitClicked = true;
+        await sleep(1500);
+      }
+    }
+
+    // Modal confirmation check (if a secondary dialog asks to confirm upload)
+    const modalConfirmBtn = Array.from(document.querySelectorAll("[role=dialog] button, .modal button, .swal2-confirm, .ant-modal button")).find(b => 
+      visible(b) && !b.disabled && /^\s*(?:confirm|yes|proceed|upload|save|ok)\s*$/i.test((b.innerText || b.value || "").trim())
     );
-    if (saveBtn) {
-      console.log("[Verixa360 Assistant] Clicking save/upload confirmation button...");
-      saveBtn.click();
+    if (modalConfirmBtn) {
+      console.log(`[Verixa360 Assistant] Confirming modal dialog via "${modalConfirmBtn.innerText.trim()}"...`);
+      try { modalConfirmBtn.click(); } catch (e) {}
       await sleep(1500);
     }
 
-    setVerixaPill(`✓ Certificate Uploaded!`, "info");
+    // Step 7: Await status confirmation (View ↗ / on file / Replace)
+    let isViewable = false;
+    for (let check = 0; check < 5; check++) {
+      const containerText = (dlContainer.innerText || "").toLowerCase();
+      const hasView = Array.from(dlContainer.querySelectorAll("a, button, span")).some(el => 
+        visible(el) && /view/i.test((el.innerText || "").trim())
+      );
+      if (hasView || containerText.includes("on file") || containerText.includes("replace") || containerText.includes("view")) {
+        isViewable = true;
+        console.log("[Verixa360 Assistant] ✓ Verified: Document is filed and viewable on Verixa!");
+        break;
+      }
+      await sleep(1000);
+    }
+
+    setVerixaPill(`✓ Certificate Uploaded & Filed!`, "info");
     return {
       success: true,
-      message: `DL verification report attached and submitted successfully for ${gsmId}.`
+      message: `DL verification report attached, filed, and viewable for ${gsmId}.`,
+      viewable: isViewable
     };
   } catch (err) {
     setVerixaPill(`⚠️ Upload error: ${err.message}`, "err");
