@@ -874,16 +874,17 @@ async function runAutomationLoop() {
             uploadRes = { success: false, reason: ue.message };
           }
 
-        if (uploadRes && uploadRes.success) {
-          log(`✓ [Verixa360] Certificate successfully uploaded for ${driver.gsm_id}!`, "info");
-          driver.verification_status = "Verified & Uploaded";
-          driver.remarks = "Verified on Surepass & DL Certificate uploaded to Verixa";
-          driver.upload_status = "Uploaded";
-        } else {
-          log(`⚠️ [Verixa360] Upload notice: ${uploadRes?.reason || "Pending manual upload"}`, "warn");
-          driver.verification_status = "Verified";
-          driver.remarks = `Verified on Surepass (${uploadRes?.reason || "Verixa upload pending"})`;
-          driver.upload_status = "Pending";
+          if (uploadRes && uploadRes.success) {
+            log(`✓ [Verixa360] Certificate successfully uploaded for ${driver.gsm_id}!`, "info");
+            driver.verification_status = "Verified & Uploaded";
+            driver.remarks = "Verified on Surepass & DL Certificate uploaded to Verixa";
+            driver.upload_status = "Uploaded";
+          } else {
+            log(`⚠️ [Verixa360] Upload notice: ${uploadRes?.reason || "Pending manual upload"}`, "warn");
+            driver.verification_status = "Verified";
+            driver.remarks = `Verified on Surepass (${uploadRes?.reason || "Verixa upload pending"})`;
+            driver.upload_status = "Pending";
+          }
         }
       }
     }
