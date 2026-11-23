@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Surepass Aadhaar Verification Assistant</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #F8FAFC;
+      color: #0F172A;
+      font-size: 11px;
+      line-height: 1.4;
+      width: 100%;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 10px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #E2E8F0;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .logo-badge {
+      background: #4338CA;
+      color: #fff;
+      font-weight: 800;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
+    }
+    .brand-title {
+      font-weight: 700;
+      font-size: 12px;
+      color: #1E1B4B;
+    }
+    .status-badge {
+      font-size: 9px;
+      padding: 2px 6px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+    .status-online { background: #ECFDF5; color: #059669; border: 1px solid #A7F3D0; }
+    .status-offline { background: #F1F5F9; color: #64748B; border: 1px solid #CBD5E1; }
+
+    /* Tabs */
+    .tab-nav {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 8px;
+      background: #EEF2FF;
+      padding: 2px;
+      border-radius: 6px;
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 5px 0;
+      text-align: center;
+      font-size: 10px;
+      font-weight: 600;
+      border: none;
+      background: transparent;
+      color: #6366F1;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .tab-btn.active {
+      background: #FFFFFF;
+      color: #312E81;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    /* Cards */
+    .card {
+      background: #FFFFFF;
+      border: 1px solid #E2E8F0;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .card-title {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #64748B;
+      margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Target Grid */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+    .field-label { font-size: 9px; color: #64748B; font-weight: 600; }
+    .field-val { font-size: 11px; color: #0F172A; font-weight: 700; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s;
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: #4338CA; color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #3730A3; }
+    .btn-success { background: #059669; color: #fff; }
+    .btn-success:hover:not(:disabled) { background: #047857; }
+    .btn-danger { background: #DC2626; color: #fff; }
+    .btn-danger:hover:not(:disabled) { background: #B91C1C; }
+    .btn-outline { background: #fff; border: 1px solid #CBD5E1; color: #334155; }
+    .btn-outline:hover:not(:disabled) { background: #F1F5F9; }
+
+    /* Progress */
+    .progress-bar-wrap {
+      background: #E2E8F0;
+      border-radius: 4px;
+      height: 6px;
+      overflow: hidden;
+      margin: 4px 0 6px;
+    }
+    .progress-bar-fill {
+      background: #4338CA;
+      height: 100%;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    /* Terminal */
+    .terminal {
+      background: #0F172A;
+      color: #F8FAFC;
+      font-family: Consolas, monospace;
+      font-size: 9px;
+      border-radius: 4px;
+      padding: 6px;
+      height: 110px;
+      overflow-y: auto;
+      line-height: 1.35;
+      margin-bottom: 8px;
+    }
+    .terminal-line { margin-bottom: 2px; word-break: break-all; }
+    .term-info { color: #38BDF8; }
+    .term-success { color: #4ADE80; }
+    .term-warn { color: #FBBF24; }
+    .term-err { color: #F87171; }
+
+    /* OTP Card */
+    .otp-card {
+      background: #FEF3C7;
+      border: 1.5px solid #F59E0B;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      display: none;
+      animation: pulseBorder 1.5s infinite;
+    }
+    @keyframes pulseBorder {
+      0%, 100% { border-color: #F59E0B; }
+      50% { border-color: #D97706; }
+    }
+
+    /* Form Controls */
+    .form-input {
+      width: 100%;
+      padding: 5px 8px;
+      border: 1px solid #CBD5E1;
+      border-radius: 4px;
+      font-size: 11px;
+    }
+    .form-input:focus { outline: none; border-color: #4338CA; }
+    .table-wrap { max-height: 220px; overflow-y: auto; border: 1px solid #E2E8F0; border-radius: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 9px; }
+    th { background: #EEF2FF; text-align: left; padding: 4px 6px; font-weight: 700; color: #3730A3; position: sticky; top: 0; }
+    td { padding: 4px 6px; border-bottom: 1px solid #F1F5F9; }
+  </style>
+</head>
+<body>
+  <!-- HEADER -->
+  <div class="header">
+    <div class="brand">
+      <span class="logo-badge">AADHAAR</span>
+      <span class="brand-title">Surepass KYC Assistant</span>
+    </div>
+    <div class="status-badge status-offline" id="connBadge">Standalone Mode</div>
+  </div>
+
+  <!-- TABS -->
+  <div class="tab-nav">
+    <button class="tab-btn active" id="tabNavVerify" type="button">🚀 Auto-Verify</button>
+    <button class="tab-btn" id="tabNavUpload" type="button">📁 Upload & Mapping</button>
+    <button class="tab-btn" id="tabNavExport" type="button">📋 Results & Export</button>
+  </div>
+
+  <!-- ==================== TAB 1: AUTO-VERIFY ==================== -->
+  <div id="tabSectionVerify">
+    <!-- STATS COUNTERS -->
+    <div class="grid-2" style="grid-template-columns:repeat(4, 1fr); gap:4px; margin-bottom:8px;">
+      <div class="card" style="padding:4px 6px; text-align:center;">
+        <div style="font-size:9px; color:#64748B; font-weight:600;">Total</div>
+        <div id="statTotal" style="font-size:13px; font-weight:800; color:#0F172A;">0</div>
+      </div>
+      <div class="card" style="padding:4px 6px; text-align:center;">
+        <div style="font-size:9px; color:#059669; font-weight:600;">Verified</div>
+        <div id="statVerified" style="font-size:13px; font-weight:800; color:#059669;">0</div>
+      </div>
+      <div class="card" style="padding:4px 6px; text-align:center;">
+        <div style="font-size:9px; color:#DC2626; font-weight:600;">Failed</div>
+        <div id="statNotVerified" style="font-size:13px; font-weight:800; color:#DC2626;">0</div>
+      </div>
+      <div class="card" style="padding:4px 6px; text-align:center;">
+        <div style="font-size:9px; color:#D97706; font-weight:600;">Pending</div>
+        <div id="statPending" style="font-size:13px; font-weight:800; color:#D97706;">0</div>
+      </div>
+    </div>
+
+    <!-- TARGET CANDIDATE CARD -->
+    <div class="card">
+      <div class="card-title">
+        <span>Current Target Candidate</span>
+        <span id="badgeActiveStatus" style="font-size:8px; background:#EEF2FF; color:#4338CA; padding:1px 5px; border-radius:3px;">Idle</span>
+      </div>
+      <div class="grid-2">
+        <div>
+          <div class="field-label">Target GSM ID</div>
+          <div class="field-val" id="curGsmId">-</div>
+        </div>
+        <div>
+          <div class="field-label">12-Digit Aadhaar</div>
+          <div class="field-val" id="curAadhaar">-</div>
+        </div>
+        <div>
+          <div class="field-label">Phone Number</div>
+          <div class="field-val" id="curPhone">-</div>
+        </div>
+        <div>
+          <div class="field-label">Candidate Name</div>
+          <div class="field-val" id="curName">-</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- INTERACTIVE OTP CARD (APPEARS WHEN SUREPASS ASKS FOR OTP) -->
+    <div id="cardOtpPrompt" class="otp-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+        <strong style="color:#B45309; font-size:11px;">📲 Candidate Aadhaar OTP Required</strong>
+        <span style="font-size:8px; background:#FDE68A; color:#92400E; padding:1px 4px; border-radius:3px; font-weight:700;">Awaiting Input</span>
+      </div>
+      <p style="font-size:9.5px; color:#78350F; margin-bottom:6px;">
+        OTP has been sent to candidate's Aadhaar-linked mobile. Type OTP below or directly into the open Surepass tab:
+      </p>
+      <div style="display:flex; gap:6px;">
+        <input type="text" id="txtOtpInput" maxlength="6" placeholder="Enter 6-digit OTP" class="form-input" style="flex:1; font-size:12px; font-weight:700; letter-spacing:2px; text-align:center;">
+        <button id="btnSubmitOtp" class="btn btn-success" style="padding:4px 10px;">
+          <span>Submit OTP ➔</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- PROGRESS BAR -->
+    <div style="display:flex; justify-content:space-between; font-size:9px; color:#64748B; font-weight:600;">
+      <span id="txtProgressState">Ready to Start</span>
+      <span id="txtProgressRatio">0 / 0</span>
+    </div>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar-fill" id="progressBarFill"></div>
+    </div>
+
+    <!-- CONTROLS -->
+    <div style="display:flex; gap:6px; margin-bottom:8px;">
+      <button id="btnStart" class="btn btn-primary" style="flex:1;">
+        <span>▶ Start Auto-Verify</span>
+      </button>
+      <button id="btnStop" class="btn btn-danger" style="flex:1;" disabled>
+        <span>⏹ Pause Loop</span>
+      </button>
+    </div>
+
+    <div style="font-size:10px; color:#64748B; margin-bottom:6px; display:flex; justify-content:space-between;">
+      <span>📥 Saving to: <b>Downloads/Surepass_Aadhaar_Reports/</b></span>
+      <span id="txtSavedCount">0 PDF Saved</span>
+    </div>
+
+    <!-- TERMINAL LOG -->
+    <div class="terminal" id="termLog">
+      <div class="terminal-line term-info">[Ready] Surepass Aadhaar Assistant initialized. Load GSM queue to start.</div>
+    </div>
+  </div>
+
+  <!-- ==================== TAB 2: UPLOAD & MAPPING ==================== -->
+  <div id="tabSectionUpload" style="display:none;">
+    <!-- QUICK PASTE GSM QUEUE -->
+    <div class="card">
+      <div class="card-title">1. Quick Paste GSM Numbers (Verixa Auto-Fetch)</div>
+      <p style="font-size:10px; color:#64748B; margin-bottom:6px;">Paste GSM IDs (one per line or comma separated). The extension will search each on Verixa360, extract the 12-digit Aadhaar, verify on Surepass, and upload the certificate back to Verixa.</p>
+      <textarea id="txtPasteGsm" class="form-input" style="height:80px; font-family:monospace; margin-bottom:6px;" placeholder="GSM-FLS-10019&#10;GSM-FLS-10020&#10;GSM-FLS-10021"></textarea>
+      <button id="btnLoadPastedGsm" class="btn btn-primary" style="width:100%;">
+        <span>📥 Load GSM Queue & Start Auto-Fetch</span>
+      </button>
+    </div>
+
+    <!-- EXCEL FILE UPLOAD -->
+    <div class="card">
+      <div class="card-title">2. Or Upload Candidate Excel (.xlsx / .csv)</div>
+      <input type="file" id="fileExcelInput" accept=".xlsx,.xls,.csv" class="form-input" style="margin-bottom:6px;">
+      <div id="colMappingSection" style="display:none; margin-top:6px;">
+        <div style="font-weight:700; margin-bottom:4px;">Map Columns:</div>
+        <div class="grid-2">
+          <div>
+            <span class="field-label">GSM ID Column</span>
+            <select id="selColGsm" class="form-input"></select>
+          </div>
+          <div>
+            <span class="field-label">Aadhaar Column</span>
+            <select id="selColAadhaar" class="form-input"></select>
+          </div>
+          <div>
+            <span class="field-label">Phone Column</span>
+            <select id="selColPhone" class="form-input"></select>
+          </div>
+          <div>
+            <span class="field-label">Name Column</span>
+            <select id="selColName" class="form-input"></select>
+          </div>
+        </div>
+        <button id="btnApplyMapping" class="btn btn-success" style="width:100%; margin-top:8px;">
+          <span>✓ Apply & Load Records</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== TAB 3: RESULTS & EXPORT ==================== -->
+  <div id="tabSectionExport" style="display:none;">
+    <!-- EXPORT ACTIONS -->
+    <div class="card" style="background:#F5F3FF; border-color:#DDD6FE;">
+      <div class="card-title" style="color:#4338CA;">Export Completed Records & Reports</div>
+      <p style="font-size:10px; color:#4338CA; margin-bottom:8px;">Export verified data as Excel, copy to Google Sheets, or download all official Aadhaar verification report PDFs as a ZIP package.</p>
+      <div style="display:flex; gap:6px; margin-bottom:6px;">
+        <button id="btnExportExcel" class="btn btn-primary" style="flex:1;">
+          <span>📥 Export Excel (.xlsx)</span>
+        </button>
+        <button id="btnCopyGSheet" class="btn btn-outline" style="flex:1;">
+          <span>📋 Copy G-Sheet</span>
+        </button>
+      </div>
+      <div style="display:flex; gap:6px;">
+        <button id="btnDownloadZip" class="btn" style="flex:1; background:#4F46E5; color:#fff; border:none; display:flex; align-items:center; justify-content:center; gap:6px; font-weight:600; padding:6px 10px; border-radius:4px; cursor:pointer;">
+          <span>📦 Download All Reports ZIP (.zip)</span>
+          <span id="badgeZipCount" style="background:rgba(255,255,255,0.25); border-radius:10px; padding:1px 6px; font-size:9px;">0 ready</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- SEARCH & FILTER TABLE -->
+    <div class="card">
+      <div class="card-title">
+        <span>Verified Candidate Records</span>
+        <input type="text" id="txtFilterSearch" placeholder="Filter GSM / Phone..." class="form-input" style="width:120px; font-size:10px; padding:2px 6px;">
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Row</th>
+              <th>GSM ID</th>
+              <th>Status</th>
+              <th>Remarks</th>
+            </tr>
+          </thead>
+          <tbody id="tblRecordsBody">
+            <tr><td colspan="4" style="text-align:center; color:#94A3B8; padding:12px;">No records loaded yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- BUNDLED LIBRARIES -->
+  <script src="libs/xlsx.full.min.js"></script>
+  <script src="libs/jspdf.umd.min.js"></script>
+  <script src="libs/jszip.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

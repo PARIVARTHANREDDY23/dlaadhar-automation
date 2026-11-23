@@ -1,0 +1,66 @@
+{
+  "manifest_version": 3,
+  "name": "Surepass Aadhaar Verification Assistant",
+  "version": "1.0.0",
+  "description": "Automated Aadhaar verification assistant bridging Verixa360 and Surepass Aadhaar KYC verification.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs",
+    "sidePanel",
+    "downloads"
+  ],
+  "host_permissions": [
+    "*://console.surepass.app/*",
+    "*://*.surepass.app/*",
+    "*://*.verixa360.com/*",
+    "*://verixa360.com/*",
+    "*://*.verixa360.in/*",
+    "*://verixa360.in/*",
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_title": "Surepass Aadhaar Verification Assistant",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://console.surepass.app/*", "*://*.surepass.app/*"],
+      "js": ["libs/xlsx.full.min.js", "libs/jspdf.umd.min.js", "aadhaar_content.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "*://*.verixa360.com/*",
+        "*://verixa360.com/*",
+        "*://*.verixa360.in/*",
+        "*://verixa360.in/*"
+      ],
+      "js": ["verixa_aadhaar_content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["libs/*"],
+      "matches": ["*://console.surepass.app/*", "*://*.surepass.app/*"]
+    }
+  ]
+}
