@@ -929,27 +929,28 @@ function exportUpdatedExcel() {
     base["Date of Birth"] = r.dob || base["Date of Birth"] || base["DOB"] || "";
 
     const isVerified = (r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded");
-    const isFailed = (r.verification_status === "Not Verified" || r.verification_status === "Verification Error" || r.verification_status === "Incomplete Details" || r.verification_status === "Not Found on Verixa");
+    const isFailed = (r.verification_status === "Not Verified" || r.verification_status === "Verification Error" || r.verification_status === "Incomplete Details" || r.verification_status === "Not Found on Verixa" || r.verification_status === "Record Not Found");
 
+    // Exactly matching user requirement: If verified write "Verified" (or "Verified & Uploaded"), if not write "Not Verified"
     base["Verification Status"] = isVerified 
       ? (r.verification_status === "Verified & Uploaded" || r.upload_status === "Uploaded" ? "Verified & Uploaded" : "Verified")
-      : (isFailed ? `Failed (${r.verification_status})` : (r.verification_status || "Pending"));
+      : (isFailed ? "Not Verified" : (r.verification_status || "Pending"));
     
     base["Verification Date"] = r.verification_date || "";
-    base["Verification Remarks"] = r.remarks || (isVerified ? "Verified on Surepass" : (isFailed ? "Verification Failed" : "Pending"));
+    base["Verification Remarks"] = r.remarks || (isVerified ? "Verified on Surepass" : (isFailed ? "Not Verified" : "Pending"));
     
     // Verixa Certificate Upload
     base["Verixa Certificate Upload"] = (r.verification_status === "Verified & Uploaded" || r.upload_status === "Uploaded") 
       ? "Uploaded to Verixa" 
-      : (isFailed ? "Skipped (Verification Failed)" : (r.upload_status || "Pending"));
+      : (isFailed ? "Skipped (Not Verified)" : (r.upload_status || "Pending"));
     
-    base["Report Filename"] = isVerified ? (r.report_filename || "") : "N/A (Failed)";
+    base["Report Filename"] = isVerified ? (r.report_filename || "") : "N/A (Not Verified)";
 
     // Processing Status column (accurately distinguishes success vs failure)
     if (isVerified) {
-      base["Processing Status"] = "Completed - Verified Successfully";
+      base["Processing Status"] = "Completed - Verified";
     } else if (isFailed) {
-      base["Processing Status"] = `Completed - Failed: ${r.remarks || r.verification_status}`;
+      base["Processing Status"] = `Completed - Not Verified (${r.remarks || 'Failed on Surepass'})`;
     } else {
       base["Processing Status"] = "Pending";
     }
@@ -1043,11 +1044,8 @@ async function downloadAllReportsZip() {
 
       const filename = `${r.gsm_id}_${r.phone_number || "DL"}_DL_Report.pdf`;
 
-      // Get or re-generate the full 4-page PDF
-      let pdfUri = r.pdf_base64;
-      if (!pdfUri) {
-        pdfUri = generateSurepassReportPdf(r, r.card_details || {});
-      }
+      // Guarantee generation of the complete 4-page official report PDF
+      let pdfUri = generateSurepassReportPdf(r, r.card_details || {}) || r.pdf_base64;
 
       if (pdfUri) {
         // Strip data:application/pdf;...;base64,
@@ -1121,7 +1119,8 @@ function downloadSingleReportPdf(gsmId) {
   const r = currentLocalBatch.records.find(d => d.gsm_id === gsmId);
   if (!r) return;
 
-  let pdfUri = r.pdf_base64 || generateSurepassReportPdf(r, r.card_details || {});
+  // Guarantee generation of the complete 4-page official report PDF
+  let pdfUri = generateSurepassReportPdf(r, r.card_details || {}) || r.pdf_base64;
   if (!pdfUri) {
     return alert(`Could not generate PDF for ${gsmId}.`);
   }
@@ -1433,39 +1432,26 @@ async function runAutomationLoop() {
 
     log(`✓ Outcome: Verified (${finalRemarks})`, "info");
 
-    // Official Surepass Report Download Confirmation & Auto-Upload to Verixa360
-    driver.report_download_status = "Downloaded";
-    log(`📥 Official Surepass report PDF saved to Downloads/Surepass_DL_Reports/`, "info");
+    // Official Surepass 4-Page Report Generation & Automatic Download
+    // Surepass's manual Download button triggers window.print for 4 pages (Image 2).
+    // We strictly generate the complete, official 4-page report containing all verified data fields.
+    const official4PagePdf = generateSurepassReportPdf(driver, result.card_details) || result.pdf_base64;
+    const pdfToUpload = official4PagePdf;
 
-    // Auto-upload DL Certificate back into Verixa under Verification results -> Driving licence certificate
-    let pdfToUpload = result.pdf_base64;
-    if (!pdfToUpload) {
-      // Query background script cache
-      try {
-        const bgPdf = await new Promise(resolve => {
-          chrome.runtime.sendMessage({ action: "GET_LATEST_SUREPASS_PDF", dlNumber: cleanDl(driver.dl_number) }, res => resolve(res));
-        });
-        if (bgPdf && bgPdf.success && bgPdf.pdfBase64) {
-          pdfToUpload = bgPdf.pdfBase64;
-        }
-      } catch (e) {}
-    }
-
-    // If PDF wasn't a direct file stream (since Surepass uses window.print), generate official Surepass Report PDF directly
-    if (!pdfToUpload) {
-      pdfToUpload = generateSurepassReportPdf(driver, result.card_details);
-      if (pdfToUpload) {
-        chrome.runtime.sendMessage({
-          action: "DOWNLOAD_FILE",
-          url: pdfToUpload,
-          filename: `Surepass_DL_Reports/${reportFilename}`
-        }, () => {});
-      }
+    if (pdfToUpload) {
+      driver.pdf_base64 = pdfToUpload;
+      // Download official 4-page report to Downloads/Surepass_DL_Reports/<GSM>_<PHONE>_DL_Report.pdf
+      chrome.runtime.sendMessage({
+        action: "DOWNLOAD_FILE",
+        url: pdfToUpload,
+        filename: `Surepass_DL_Reports/${reportFilename}`
+      }, () => {});
+      driver.report_download_status = "Downloaded";
+      log(`📥 Official 4-page Surepass report saved to Downloads/Surepass_DL_Reports/${reportFilename}`, "info");
     }
 
     if (pdfToUpload) {
-        driver.pdf_base64 = pdfToUpload;
-        log(`📤 [Verixa360] Uploading DL Certificate for ${driver.gsm_id}...`, "info");
+        log(`📤 [Verixa360] Uploading 4-page DL Certificate for ${driver.gsm_id}...`, "info");
 
         // Verify verixaTab is still valid and reachable
         try {

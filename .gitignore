@@ -45,4 +45,3 @@ cloudflared.exe
 data/input/upload_*
 data/*.zip
 !data/surepass_dl_extension.zip
-!data/surepass_aadhaar_extension.zip
