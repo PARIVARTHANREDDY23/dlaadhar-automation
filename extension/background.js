@@ -54,12 +54,6 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
 
 // Listener for downloading files requested by popup and querying latest captured report
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "CLEAR_SUREPASS_PDF") {
-    latestSurepassPdf = null;
-    sendResponse({ success: true });
-    return true;
-  }
-
   if (request.action === "GET_LATEST_SUREPASS_PDF") {
     // Return cached PDF if less than 90 seconds old
     if (latestSurepassPdf && Date.now() - latestSurepassPdf.timestamp < 90000) {

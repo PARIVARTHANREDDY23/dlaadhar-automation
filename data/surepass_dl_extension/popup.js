@@ -1335,11 +1335,6 @@ async function runAutomationLoop() {
       await sleep(300);
     } catch (e) {}
 
-    // Clear any previous cached report in background
-    try {
-      chrome.runtime.sendMessage({ action: "CLEAR_SUREPASS_PDF" });
-    } catch (e) {}
-
     let result = null;
     let attempts = 0;
     while (attempts < 2 && isAutomating) {
@@ -1400,47 +1395,6 @@ async function runAutomationLoop() {
     driver.card_details = result.card_details || driver.card_details || {};
 
     log(`✓ Outcome: ${finalStatus} (${finalRemarks})`, finalStatus === "Verified" ? "info" : "warn");
-
-    // STRICT CONDITION: Only if genuinely Verified, trigger Verixa upload!
-    // If failed, not verified, or clicked print/save manually, Verixa upload MUST NOT be triggered!
-    if (finalStatus !== "Verified") {
-      log(`⛔ [Verixa360] DL verification not verified for ${driver.gsm_id} (${finalStatus}: ${finalRemarks}). STRICTLY SKIPPING Verixa upload.`, "warn");
-      driver.upload_status = "Skipped (Verification Failed)";
-      driver.report_download_status = "Skipped";
-
-      chrome.storage.local.set({ localBatch: currentLocalBatch });
-      updateUIFromBatch();
-
-      const backend = await getBackendUrl();
-      try {
-        fetch(`${backend}/api/extension/submit_result`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            record_id: driver.record_id || `row_${driver.row_index}`,
-            verification_status: finalStatus,
-            remarks: finalRemarks,
-            report_filename: ""
-          })
-        }).catch(() => {});
-      } catch (e) {}
-
-      await sleep(1500);
-      continue; // Strictly advance to next driver WITHOUT touching Verixa!
-    }
-
-    // Double check that verified card has a valid candidate name before uploading
-    const verifiedName = (result.card_details?.["Name"] || "").trim().toLowerCase();
-    if (!verifiedName || verifiedName === "null" || verifiedName === "undefined" || verifiedName === "-") {
-      log(`⛔ [Verixa360] Verified card missing candidate name for ${driver.gsm_id}. Refusing to upload to Verixa.`, "warn");
-      driver.verification_status = "Not Verified";
-      driver.remarks = "Incomplete or missing candidate name on Surepass";
-      driver.upload_status = "Skipped (Verification Failed)";
-      chrome.storage.local.set({ localBatch: currentLocalBatch });
-      updateUIFromBatch();
-      await sleep(1500);
-      continue; // Strictly advance to next driver WITHOUT touching Verixa!
-    }
 
     // Official Surepass Report Download Confirmation & Auto-Upload to Verixa360
     if (finalStatus === "Verified") {

@@ -341,10 +341,6 @@ async function verifyDriverOnPage(driver) {
   try { submitBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); } catch (e) {}
   console.log("[Surepass Assistant] Submit clicked. Awaiting verification response...");
 
-  // Reset any cached blob from previous operations
-  lastCapturedPdfBlob = null;
-  lastOpenedReportUrl = null;
-
   // 4. Await verification result (poll for up to 15s)
   const startTime = Date.now();
   let finalStatus = null;
@@ -363,7 +359,7 @@ async function verifyDriverOnPage(driver) {
     const bodyText = document.body.innerText;
     const bodyLower = bodyText.toLowerCase();
 
-    // A. Check for Credits / Auth / Session Errors
+    // A. Check for Credits / Auth
     if (bodyLower.includes("insufficient credit") || 
         bodyLower.includes("insufficient balance") || 
         bodyLower.includes("402 payment required") || 
@@ -373,51 +369,36 @@ async function verifyDriverOnPage(driver) {
       break;
     }
 
-    // B. Check for Not Verified / Invalid DL / Record Not Found / Failed
-    const hasFailureIndicator = 
-        bodyLower.includes("record not found") || 
+    // B. Check for Not Verified / Invalid DL
+    if (bodyLower.includes("record not found") || 
         bodyLower.includes("no record found") || 
         bodyLower.includes("invalid id number") || 
         bodyLower.includes("invalid dl") || 
         bodyLower.includes("invalid driving license") || 
-        bodyLower.includes("verification failed") || 
-        bodyLower.includes("failed to verify") || 
-        bodyLower.includes("details not found") || 
-        bodyLower.includes("no details found") || 
         bodyText.includes('"status_code": 404') || 
         bodyText.includes('"status_code": 422') || 
         bodyText.includes('"status_code": 400') ||
-        bodyText.includes('"status": "failed"') ||
-        bodyText.includes('"status": "FAILURE"') ||
-        (bodyText.includes('"success": false') && !bodyText.includes('"success": true'));
-
-    if (hasFailureIndicator) {
+        (bodyText.includes('"success": false') && !bodyText.includes('"success": true'))) {
       finalStatus = "Not Verified";
       remarks = "Record Not Found or Invalid DL Number";
       break;
     }
 
-    // C. Check for GENUINE Live Success (Never rely solely on a Download button!)
+    // C. Check for Live Success (Response Card or 200 Success status)
+    const hasResponseCard = (bodyLower.includes("response") || bodyLower.includes("data")) && 
+                            (bodyLower.includes("client id") || bodyLower.includes("license number") || bodyLower.includes("permanent address"));
+    const hasSuccessBadge = (bodyLower.includes("200") && (bodyLower.includes("success") || bodyLower.includes("ok"))) || bodyText.includes('"status_code": 200');
+    const hasActiveDetails = bodyLower.includes("dl details found") || bodyLower.includes("status: active") || bodyLower.includes("verification successful") || bodyLower.includes("status: valid");
     const hasDriverDl = (cleanDl && (bodyText.includes(cleanDl) || bodyLower.includes(cleanDl.toLowerCase()))) || 
                         (rawDl && (bodyText.includes(rawDl) || bodyLower.includes(rawDl.toLowerCase())));
-    const hasSuccessBadge = (bodyLower.includes("200") && (bodyLower.includes("success") || bodyLower.includes("ok"))) || 
-                            bodyText.includes('"status_code": 200') || 
-                            bodyLower.includes("status: valid") || 
-                            bodyLower.includes("status: active") || 
-                            bodyLower.includes("verification successful");
-    const hasResponseCard = (bodyLower.includes("response") || bodyLower.includes("data")) && 
-                            (bodyLower.includes("license number") || bodyLower.includes("permanent address"));
+    const hasDownloadBtn = Array.from(document.querySelectorAll("button, a, [role='button']")).some(b => 
+      /download/i.test(b.innerText || "") && b.offsetParent !== null
+    );
 
-    // Positive check: Must have driver DL on screen, explicit success/response, and valid name
-    if (hasDriverDl && (hasSuccessBadge || hasResponseCard) && !hasFailureIndicator) {
-      const tempCard = extractSurepassCardDetails();
-      const tempName = (tempCard?.["Name"] || "").trim().toLowerCase();
-      // Only mark Verified if candidate details contain an actual name
-      if (tempName && tempName !== "null" && tempName !== "undefined" && tempName !== "-") {
-        finalStatus = "Verified";
-        remarks = "Driver Licence Verified Successfully (Surepass Active)";
-        break;
-      }
+    if ((hasResponseCard && (hasDriverDl || hasDownloadBtn)) || (hasSuccessBadge && hasDriverDl) || (hasActiveDetails && hasDriverDl)) {
+      finalStatus = "Verified";
+      remarks = "Driver Licence Verified Successfully (Surepass Active)";
+      break;
     }
   }
 
@@ -509,7 +490,7 @@ async function verifyDriverOnPage(driver) {
   }
 
   return {
-    success: finalStatus === "Verified",
+    success: finalStatus === "Verified" || finalStatus === "Not Verified",
     status: finalStatus,
     remarks: remarks,
     pdf_downloaded: surepassPdfTriggered,
