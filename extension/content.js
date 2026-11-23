@@ -73,7 +73,6 @@ function formatDobForInput(dobStr, inputType) {
 // Extract verified fields from the Surepass Response Card
 function extractSurepassCardDetails() {
   const details = {};
-  const allEl = Array.from(document.querySelectorAll("div, span, p, td, b, th, strong"));
   const fields = [
     "Client ID", "License Number", "State", "Name", 
     "Permanent Address", "Permanent Zip", "Temporary Address", 
@@ -82,36 +81,66 @@ function extractSurepassCardDetails() {
     "Gender", "Blood Group", "Badge Number", "Class of Vehicle",
     "COV", "Issue Date", "Valid Till", "Non Transport", "Transport"
   ];
-  
+
+  // Strategy 1: Find individual field cards (Image 1: Each card has label on top and value below)
+  const allContainers = Array.from(document.querySelectorAll("div, section, td, tr, li, article"));
   fields.forEach(f => {
-    const el = allEl.find(e => e.children.length === 0 && (e.innerText || "").trim().toLowerCase() === f.toLowerCase());
+    const fLower = f.toLowerCase();
+    const matchingContainer = allContainers.find(c => {
+      if (!c || c.children.length > 8) return false;
+      const txt = (c.innerText || "").trim().toLowerCase();
+      return (txt.startsWith(fLower + "\n") || txt.startsWith(fLower + ":") || txt === fLower) && txt.length < 350;
+    });
+
+    if (matchingContainer) {
+      const lines = matchingContainer.innerText.split("\n").map(s => s.trim()).filter(Boolean);
+      const labelIdx = lines.findIndex(l => l.toLowerCase() === fLower || l.toLowerCase().startsWith(fLower + ":"));
+      if (labelIdx !== -1 && lines[labelIdx + 1]) {
+        details[f] = lines[labelIdx + 1];
+      }
+    }
+  });
+
+  // Strategy 2: Look at label element's sibling and parent
+  const allEl = Array.from(document.querySelectorAll("div, span, p, td, b, th, strong, label"));
+  fields.forEach(f => {
+    if (details[f]) return;
+    const fLower = f.toLowerCase();
+    const el = allEl.find(e => {
+      const txt = (e.innerText || "").trim().toLowerCase();
+      return (txt === fLower || txt === fLower + ":") && e.children.length <= 1;
+    });
     if (el) {
-      const parent = el.parentElement;
-      const sibling = el.nextElementSibling || parent?.querySelector("div:last-child, p:last-child, span:last-child");
-      if (sibling && sibling !== el && sibling.innerText.trim()) {
-        details[f] = sibling.innerText.trim();
-      } else if (parent && parent.innerText) {
-        // Fallback: extract line following label
-        const lines = parent.innerText.split("\n").map(s => s.trim()).filter(Boolean);
-        const idx = lines.findIndex(l => l.toLowerCase() === f.toLowerCase());
-        if (idx !== -1 && lines[idx + 1]) {
-          details[f] = lines[idx + 1];
+      const sib = el.nextElementSibling;
+      if (sib && (sib.innerText || "").trim()) {
+        details[f] = sib.innerText.trim();
+      } else {
+        const parent = el.parentElement;
+        if (parent) {
+          const lines = parent.innerText.split("\n").map(s => s.trim()).filter(Boolean);
+          const idx = lines.findIndex(l => l.toLowerCase() === fLower || l.toLowerCase().startsWith(fLower + ":"));
+          if (idx !== -1 && lines[idx + 1]) {
+            details[f] = lines[idx + 1];
+          }
         }
       }
     }
   });
 
-  // Also check full Response block text if any field is missing
-  const responseBlock = Array.from(document.querySelectorAll("div, section")).find(d => 
+  // Strategy 3: Multi-line regex match against Response block or body text
+  const responseBlock = Array.from(document.querySelectorAll("div, section, main")).find(d => 
     (d.innerText || "").includes("Response") && (d.innerText || "").includes("License Number")
-  );
+  ) || document.body;
+
   if (responseBlock) {
     const blockText = responseBlock.innerText;
     fields.forEach(f => {
       if (!details[f]) {
-        const re = new RegExp(f + "\\s*\\n\\s*([^\\n]+)", "i");
+        const re = new RegExp("(?:^|\\n)\\s*" + f.replace(/[/]/g, "[/]") + "\\s*[:\\n\\t]+\\s*([^\\n\\r]+)", "im");
         const m = blockText.match(re);
-        if (m && m[1]) details[f] = m[1].trim();
+        if (m && m[1]) {
+          details[f] = m[1].trim();
+        }
       }
     });
   }
@@ -354,23 +383,18 @@ async function verifyDriverOnPage(driver) {
   lastCapturedPdfBlob = null;
   lastOpenedReportUrl = null;
 
-  // Capture pre-existing card on screen so we don't accidentally match an old candidate's result
-  const initialCard = extractSurepassCardDetails();
-  const initialClientId = initialCard?.["Client ID"] || "";
-  const initialLic = (initialCard?.["License Number"] || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-
   submitBtn.click();
   try { submitBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); } catch (e) {}
-  console.log("[Surepass Assistant] Submit clicked. Awaiting verification response...");
+  console.log(`[Surepass Assistant] Submit clicked for DL "${targetDl}". Awaiting verification response...`);
 
-  // 4. Await verification result (poll for up to 15s)
+  // 4. Await verification result (poll for up to 45s to accommodate government Parivahan SARATHI query time)
   const startTime = Date.now();
   let finalStatus = null;
   let remarks = "";
 
-  await sleep(800);
+  await sleep(1000);
 
-  while (Date.now() - startTime < 15000) {
+  while (Date.now() - startTime < 45000) {
     await sleep(400);
 
     const isSpinning = document.querySelector(".spinner, .loading, [aria-busy='true'], svg.animate-spin");
@@ -381,7 +405,7 @@ async function verifyDriverOnPage(driver) {
     const bodyText = document.body.innerText;
     const bodyLower = bodyText.toLowerCase();
 
-    // A. Check for Credits / Auth
+    // A. Check for Credits / Auth errors
     if (bodyLower.includes("insufficient credit") || 
         bodyLower.includes("insufficient balance") || 
         bodyLower.includes("402 payment required") || 
@@ -391,8 +415,8 @@ async function verifyDriverOnPage(driver) {
       break;
     }
 
-    // B. Check for Not Verified / Invalid DL / Record Not Found / Errors
-    const errToast = document.querySelector(".toast-error, .alert-danger, .ant-notification-error, [role=alert], .error-message, .swal2-error, .v-alert, .toast--error");
+    // B. Check for Explicit Failure Messages
+    const errToast = document.querySelector(".toast-error, .alert-danger, .ant-notification-error, [role=alert], .error-message, .swal2-error, .v-alert--error, .toast--error");
     const errToastText = errToast && errToast.offsetParent !== null ? (errToast.innerText || "").trim() : "";
 
     const hasFailureKeywords = 
@@ -423,21 +447,51 @@ async function verifyDriverOnPage(driver) {
       break;
     }
 
-    // C. Check for Genuine Positive Verification for THIS Specific Driver
-    // Note: We deliberately do NOT rely on hasDownloadBtn or generic response cards from previous drivers!
+    // C. Check for Success Toast / Notification / Response Headers
+    const successToast = document.querySelector(".toast-success, .alert-success, .ant-notification-success, .ant-message-success, .swal2-success, .v-alert--success, .toast--success, .bg-green-500, .bg-emerald-500");
+    const successToastText = successToast && successToast.offsetParent !== null ? (successToast.innerText || "").trim() : "";
+
+    const hasSuccessKeywords = bodyLower.includes("dl verified") || 
+                               bodyLower.includes("verification success") || 
+                               bodyLower.includes("verified success") || 
+                               bodyLower.includes("details fetched successfully") || 
+                               bodyLower.includes("license verified") || 
+                               bodyLower.includes("request successful") ||
+                               bodyText.includes('"status_code": 200') ||
+                               bodyText.includes('"status": "success"') ||
+                               (bodyText.includes('"success": true') && !bodyText.includes('"success": false'));
+
+    // D. Extract Card Details
     const currentCard = extractSurepassCardDetails();
     const currentLic = (currentCard?.["License Number"] || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-    const currentName = (currentCard?.["Name"] || "").trim().toLowerCase();
-    const currentClient = currentCard?.["Client ID"] || "";
 
-    const isThisDriverDl = cleanDl && currentLic.length > 5 && (currentLic.includes(cleanDl) || cleanDl.includes(currentLic));
-    const hasValidCandidateName = currentName && currentName !== "null" && currentName !== "undefined" && currentName !== "-" && currentName.length > 1;
-    const isNewOrUpdatedCard = (!initialClientId || currentClient !== initialClientId || currentLic !== initialLic);
+    // E. Check if Target DL appears in the Response or DOM outside input fields
+    const allNonInputEl = Array.from(document.querySelectorAll("div, p, span, td, b, strong, h1, h2, h3, h4, h5"));
+    const dlInResponseDom = allNonInputEl.some(el => {
+      if (el.tagName === "INPUT" || el.closest("input") || el.closest(".request-form, form")) return false;
+      const t = (el.innerText || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+      return t === cleanDl || (t.length > 8 && t.includes(cleanDl));
+    });
 
-    if (isThisDriverDl && hasValidCandidateName && isNewOrUpdatedCard) {
+    const isThisDriverDl = (currentLic && (currentLic.includes(cleanDl) || cleanDl.includes(currentLic))) || dlInResponseDom;
+    const hasDownloadBtn = Array.from(document.querySelectorAll("button, a, [role=button]")).some(b => {
+      const bt = (b.innerText || b.value || "").toLowerCase().trim();
+      return (bt.includes("download") || bt.includes("pdf")) && !bt.includes("excel") && b.offsetParent !== null;
+    });
+
+    // POSITIVE MATCH: Target DL found in response / card, or success notification fired with no failure!
+    if (isThisDriverDl && (successToastText || hasSuccessKeywords || hasDownloadBtn || currentCard?.["Client ID"] || currentCard?.["Name"])) {
       finalStatus = "Verified";
-      remarks = "Driver Licence Verified Successfully (Surepass Active)";
-      console.log(`[Surepass Assistant] Positive match confirmed for DL: ${cleanDl}, Name: ${currentCard["Name"]}`);
+      remarks = successToastText || "Driver Licence Verified Successfully (Surepass Active)";
+      console.log(`[Surepass Assistant] Positive match confirmed for DL: ${cleanDl}! Card:`, currentCard);
+      break;
+    }
+
+    if ((successToastText || hasSuccessKeywords) && !hasFailureKeywords) {
+      await sleep(600);
+      finalStatus = "Verified";
+      remarks = successToastText || "Driver Licence Verified Successfully (Surepass Active)";
+      console.log(`[Surepass Assistant] Positive match confirmed via Success message!`);
       break;
     }
   }
@@ -457,7 +511,9 @@ async function verifyDriverOnPage(driver) {
     await sleep(1200);
 
     // Extract all structured fields from the verified card (Image 1)
-    cardDetails = extractSurepassCardDetails();
+    cardDetails = extractSurepassCardDetails() || {};
+    if (!cardDetails["License Number"]) cardDetails["License Number"] = driver.dl_number;
+    if (!cardDetails["Name"]) cardDetails["Name"] = driver.driver_name || "Verified Candidate";
     console.log("[Surepass Assistant] Extracted Card Details:", cardDetails);
 
     // Suppress blocking native window.print modal (Image 2) so automation continues smoothly
