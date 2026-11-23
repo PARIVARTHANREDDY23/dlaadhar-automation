@@ -11,23 +11,23 @@ let lastOpenedReportUrl = null;
 
 try {
   const origCreateObjectURL = URL.createObjectURL;
-  URL.createObjectURL = function(obj) {
+  URL.createObjectURL = function (obj) {
     if (obj instanceof Blob && (obj.type.includes("pdf") || obj.size > 2000)) {
       lastCapturedPdfBlob = obj;
     }
     return origCreateObjectURL.apply(this, arguments);
   };
-} catch (e) {}
+} catch (e) { }
 
 try {
   const origWindowOpen = window.open;
-  window.open = function(url) {
+  window.open = function (url) {
     if (url && (url.includes("pdf") || url.includes("report") || url.includes("download") || url.includes("surepass"))) {
       lastOpenedReportUrl = url;
     }
     return origWindowOpen.apply(this, arguments);
   };
-} catch (e) {}
+} catch (e) { }
 
 function blobToBase64(blob) {
   return new Promise((resolve) => {
@@ -42,7 +42,7 @@ function blobToBase64(blob) {
 function formatDobForInput(dobStr, inputType) {
   if (!dobStr) return "";
   const cleaned = dobStr.trim();
-  
+
   let day = "", month = "", year = "";
 
   // 1. Format: YYYY-MM-DD or YYYY/MM/DD
@@ -74,8 +74,8 @@ function formatDobForInput(dobStr, inputType) {
 function extractSurepassCardDetails() {
   const details = {};
   const fields = [
-    "Client ID", "License Number", "State", "Name", 
-    "Permanent Address", "Permanent Zip", "Temporary Address", 
+    "Client ID", "License Number", "State", "Name",
+    "Permanent Address", "Permanent Zip", "Temporary Address",
     "Temporary Zip", "City Name", "Citizenship",
     "Father Name", "Father/Husband Name", "DOB", "Date of Birth",
     "Gender", "Blood Group", "Badge Number", "Class of Vehicle",
@@ -128,7 +128,7 @@ function extractSurepassCardDetails() {
   });
 
   // Strategy 3: Multi-line regex match against Response block or body text
-  const responseBlock = Array.from(document.querySelectorAll("div, section, main")).find(d => 
+  const responseBlock = Array.from(document.querySelectorAll("div, section, main")).find(d =>
     (d.innerText || "").includes("Response") && (d.innerText || "").includes("License Number")
   ) || document.body;
 
@@ -154,7 +154,7 @@ function findElementEverywhere(selectors) {
     try {
       const el = document.querySelector(s);
       if (el && el.offsetParent !== null) return el;
-    } catch (e) {}
+    } catch (e) { }
   }
   // Search inside iframes
   try {
@@ -167,9 +167,9 @@ function findElementEverywhere(selectors) {
           const el = doc.querySelector(s);
           if (el) return el;
         }
-      } catch (e) {}
+      } catch (e) { }
     }
-  } catch (e) {}
+  } catch (e) { }
   return null;
 }
 
@@ -217,7 +217,7 @@ function getSurepassInputs() {
   }) || document.body;
 
   const inputs = Array.from(formBox.querySelectorAll("input:not([type='hidden']):not([type='checkbox']):not([type='radio']):not([type='submit'])"))
-                      .filter(i => i.offsetParent !== null);
+    .filter(i => i.offsetParent !== null);
 
   let dlInput = null;
   let dobInput = null;
@@ -231,15 +231,15 @@ function getSurepassInputs() {
 
   // Case 2: Multi-input fallback
   dlInput = inputs.find(i => /id_number|license_number|license|dl/i.test((i.name || "") + (i.id || "") + (i.placeholder || ""))) ||
-            findInputByText("ID Number") ||
-            findInputByText("DL Number") ||
-            findInputByText("Driving License") ||
-            inputs[0];
+    findInputByText("ID Number") ||
+    findInputByText("DL Number") ||
+    findInputByText("Driving License") ||
+    inputs[0];
 
   dobInput = inputs.find(i => i !== dlInput && (/dob|birth|date/i.test((i.name || "") + (i.id || "") + (i.placeholder || "")) || i.type === "date")) ||
-             findInputByText("DOB", dlInput) ||
-             findInputByText("Date of Birth", dlInput) ||
-             inputs.find(i => i !== dlInput);
+    findInputByText("DOB", dlInput) ||
+    findInputByText("Date of Birth", dlInput) ||
+    inputs.find(i => i !== dlInput);
 
   return { dlInput, dobInput };
 }
@@ -261,14 +261,14 @@ function setInputValue(input, value) {
 
   // Unfocus any previously active element
   if (document.activeElement && document.activeElement !== input) {
-    try { document.activeElement.blur(); } catch (e) {}
+    try { document.activeElement.blur(); } catch (e) { }
   }
   input.focus();
 
   // Use prototype setter so React/Vue synthetic state managers register the change cleanly
   const prototype = Object.getPrototypeOf(input);
   const desc = Object.getOwnPropertyDescriptor(prototype, "value") ||
-               Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
 
   if (desc && desc.set) {
     desc.set.call(input, value);
@@ -310,10 +310,10 @@ async function verifyDriverOnPage(driver) {
   const dobInput = inputPair.dobInput;
 
   if (!dlInput) {
-    return { 
-      success: false, 
-      status: "Verification Error", 
-      remarks: "DL input field not found on current page. Ensure Surepass DL service page is open." 
+    return {
+      success: false,
+      status: "Verification Error",
+      remarks: "DL input field not found on current page. Ensure Surepass DL service page is open."
     };
   }
 
@@ -325,8 +325,8 @@ async function verifyDriverOnPage(driver) {
   // 2. Locate and Fill DOB strictly into dobInput (guaranteed distinct from dlInput)
   if (driver.dob && dobInput && dobInput !== dlInput) {
     // Explicitly blur dlInput first so no active caret remains in DL field!
-    try { dlInput.blur(); } catch (e) {}
-    
+    try { dlInput.blur(); } catch (e) { }
+
     const formattedDob = formatDobForInput(driver.dob, dobInput.type);
     console.log(`[Surepass Assistant] Entering DOB strictly into DOB field: "${formattedDob}"`);
     setInputValue(dobInput, formattedDob);
@@ -366,10 +366,10 @@ async function verifyDriverOnPage(driver) {
   }, 5000);
 
   if (!submitBtn) {
-    return { 
-      success: false, 
-      status: "Verification Error", 
-      remarks: "Submit / Verify button not found on Surepass page." 
+    return {
+      success: false,
+      status: "Verification Error",
+      remarks: "Submit / Verify button not found on Surepass page."
     };
   }
 
@@ -384,7 +384,7 @@ async function verifyDriverOnPage(driver) {
   lastOpenedReportUrl = null;
 
   submitBtn.click();
-  try { submitBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); } catch (e) {}
+  try { submitBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); } catch (e) { }
   console.log(`[Surepass Assistant] Submit clicked for DL "${targetDl}". Awaiting verification response...`);
 
   // 4. Await verification result (poll for up to 45s to accommodate government Parivahan SARATHI query time)
@@ -406,39 +406,75 @@ async function verifyDriverOnPage(driver) {
     const bodyLower = bodyText.toLowerCase();
 
     // A. Check for Credits / Auth errors
-    if (bodyLower.includes("insufficient credit") || 
-        bodyLower.includes("insufficient balance") || 
-        bodyLower.includes("402 payment required") || 
-        bodyLower.includes("401 unauthorized")) {
+    if (bodyLower.includes("insufficient credit") ||
+      bodyLower.includes("insufficient balance") ||
+      bodyLower.includes("402 payment required") ||
+      bodyLower.includes("401 unauthorized")) {
       finalStatus = "Verification Error";
       remarks = "Insufficient Surepass credits or Unauthorized session";
       break;
     }
 
-    // B. Check for Explicit Failure Messages
+    // B. Check specifically for Server Error (500, 502, 503, 504, Bad Gateway, Internal Server Error)
     const errToast = document.querySelector(".toast-error, .alert-danger, .ant-notification-error, [role=alert], .error-message, .swal2-error, .v-alert--error, .toast--error");
     const errToastText = errToast && errToast.offsetParent !== null ? (errToast.innerText || "").trim() : "";
 
-    const hasFailureKeywords = 
-        bodyLower.includes("record not found") || 
-        bodyLower.includes("no record found") || 
-        bodyLower.includes("invalid id number") || 
-        bodyLower.includes("invalid dl") || 
-        bodyLower.includes("invalid driving license") || 
-        bodyLower.includes("driving licence not found") || 
-        bodyLower.includes("failed to verify") || 
-        bodyLower.includes("verification failed") || 
-        bodyLower.includes("details not found") || 
-        bodyLower.includes("no details found") || 
-        bodyLower.includes("unable to verify") || 
-        bodyLower.includes("does not exist") || 
-        bodyLower.includes("invalid date of birth") || 
-        bodyText.includes('"status_code": 404') || 
-        bodyText.includes('"status_code": 422') || 
-        bodyText.includes('"status_code": 400') ||
-        bodyText.includes('"status": "failed"') ||
-        bodyText.includes('"status": "error"') ||
-        (bodyText.includes('"success": false') && !bodyText.includes('"success": true'));
+    const isServerErrorToast = /server\s*error|internal\s*server|something\s*went\s*wrong|500|502|503|504|bad\s*gateway|gateway\s*timeout|service\s*unavailable|temporarily\s*unavailable|upstream/i.test(errToastText);
+
+    const hasServerErrorKeywords = 
+      bodyLower.includes("server error") ||
+      bodyLower.includes("internal server error") ||
+      bodyLower.includes("500 internal server error") ||
+      bodyLower.includes("502 bad gateway") ||
+      bodyLower.includes("503 service unavailable") ||
+      bodyLower.includes("504 gateway timeout") ||
+      bodyLower.includes("bad gateway") ||
+      bodyLower.includes("gateway timeout") ||
+      bodyLower.includes("service unavailable") ||
+      bodyLower.includes("something went wrong") ||
+      bodyLower.includes("upstream server") ||
+      bodyLower.includes("parivahan server down") ||
+      bodyLower.includes("parivahan server error") ||
+      bodyLower.includes("sarathi server error") ||
+      bodyLower.includes("sarathi server down") ||
+      bodyLower.includes("server is temporarily unavailable") ||
+      bodyText.includes('"status_code": 500') ||
+      bodyText.includes('"status_code": 502') ||
+      bodyText.includes('"status_code": 503') ||
+      bodyText.includes('"status_code": 504') ||
+      bodyText.includes('"status": 500') ||
+      bodyText.includes('"status": 502') ||
+      bodyText.includes('"status": 503') ||
+      bodyText.includes('"status": 504');
+
+    if (isServerErrorToast || hasServerErrorKeywords) {
+      finalStatus = "Server Error";
+      remarks = errToastText || "Server Error (Surepass / SARATHI service temporarily unavailable)";
+      console.log(`[Surepass Assistant] Server Error detected: "${remarks}"`);
+      break;
+    }
+
+    // C. Check for Explicit Failure Messages (Invalid DL / Record Not Found)
+    const hasFailureKeywords =
+      bodyLower.includes("record not found") ||
+      bodyLower.includes("no record found") ||
+      bodyLower.includes("invalid id number") ||
+      bodyLower.includes("invalid dl") ||
+      bodyLower.includes("invalid driving license") ||
+      bodyLower.includes("driving licence not found") ||
+      bodyLower.includes("failed to verify") ||
+      bodyLower.includes("verification failed") ||
+      bodyLower.includes("details not found") ||
+      bodyLower.includes("no details found") ||
+      bodyLower.includes("unable to verify") ||
+      bodyLower.includes("does not exist") ||
+      bodyLower.includes("invalid date of birth") ||
+      bodyText.includes('"status_code": 404') ||
+      bodyText.includes('"status_code": 422') ||
+      bodyText.includes('"status_code": 400') ||
+      bodyText.includes('"status": "failed"') ||
+      bodyText.includes('"status": "error"') ||
+      (bodyText.includes('"success": false') && !bodyText.includes('"success": true'));
 
     if (hasFailureKeywords || errToastText) {
       finalStatus = "Not Verified";
@@ -447,19 +483,19 @@ async function verifyDriverOnPage(driver) {
       break;
     }
 
-    // C. Check for Success Toast / Notification / Response Headers
+    // D. Check for Success Toast / Notification / Response Headers
     const successToast = document.querySelector(".toast-success, .alert-success, .ant-notification-success, .ant-message-success, .swal2-success, .v-alert--success, .toast--success, .bg-green-500, .bg-emerald-500");
     const successToastText = successToast && successToast.offsetParent !== null ? (successToast.innerText || "").trim() : "";
 
-    const hasSuccessKeywords = bodyLower.includes("dl verified") || 
-                               bodyLower.includes("verification success") || 
-                               bodyLower.includes("verified success") || 
-                               bodyLower.includes("details fetched successfully") || 
-                               bodyLower.includes("license verified") || 
-                               bodyLower.includes("request successful") ||
-                               bodyText.includes('"status_code": 200') ||
-                               bodyText.includes('"status": "success"') ||
-                               (bodyText.includes('"success": true') && !bodyText.includes('"success": false'));
+    const hasSuccessKeywords = bodyLower.includes("dl verified") ||
+      bodyLower.includes("verification success") ||
+      bodyLower.includes("verified success") ||
+      bodyLower.includes("details fetched successfully") ||
+      bodyLower.includes("license verified") ||
+      bodyLower.includes("request successful") ||
+      bodyText.includes('"status_code": 200') ||
+      bodyText.includes('"status": "success"') ||
+      (bodyText.includes('"success": true') && !bodyText.includes('"success": false'));
 
     // D. Extract Card Details
     const currentCard = extractSurepassCardDetails();
@@ -518,10 +554,10 @@ async function verifyDriverOnPage(driver) {
 
     // Suppress blocking native window.print modal (Image 2) so automation continues smoothly
     try {
-      window.print = function() {
+      window.print = function () {
         console.log("[Surepass Assistant] window.print cleanly intercepted!");
       };
-    } catch (e) {}
+    } catch (e) { }
 
     const dlBtn = await waitForElement(() => {
       const allButtons = Array.from(document.querySelectorAll("button, a, [role='button']")).filter(btn => {
@@ -559,7 +595,7 @@ async function verifyDriverOnPage(driver) {
         try {
           pdfBase64 = await blobToBase64(lastCapturedPdfBlob);
           console.log(`[Surepass Assistant] Captured in-memory blob report (${lastCapturedPdfBlob.size} bytes)`);
-        } catch (e) {}
+        } catch (e) { }
       }
 
       // Check if window.open was triggered for the report
@@ -569,7 +605,7 @@ async function verifyDriverOnPage(driver) {
           const b = await res.blob();
           pdfBase64 = await blobToBase64(b);
           console.log(`[Surepass Assistant] Fetched report from window.open URL (${b.size} bytes)`);
-        } catch (e) {}
+        } catch (e) { }
       }
 
       // If we have base64, also store in background script for safety
@@ -578,7 +614,7 @@ async function verifyDriverOnPage(driver) {
           action: "STORE_SUREPASS_PDF",
           pdfBase64: pdfBase64,
           filename: `${driver.gsm_id}_${driver.phone_number || "DL"}_DL_Report.pdf`
-        }).catch(() => {});
+        }).catch(() => { });
       }
     } else {
       console.warn("[Surepass Assistant] Official Surepass download button not found on result card.");

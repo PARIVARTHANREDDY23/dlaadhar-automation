@@ -650,6 +650,7 @@ function renderRecordsTable() {
     const hasReport = r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded" || r.card_details || r.pdf_base64;
     if (r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded") { color = "#047857"; bg = "#ECFDF5"; }
     else if (r.verification_status === "Not Verified") { color = "#B45309"; bg = "#FFFBEB"; }
+    else if (r.verification_status === "Server Error") { color = "#DC2626"; bg = "#FEF2F2"; }
     else if (r.verification_status === "Not Found on Verixa" || r.verification_status === "Invalid Details" || r.verification_status === "Verification Error") { color = "#BE123C"; bg = "#FFF1F2"; }
 
     return `
@@ -929,29 +930,36 @@ function exportUpdatedExcel() {
     base["Date of Birth"] = r.dob || base["Date of Birth"] || base["DOB"] || "";
 
     const isVerified = (r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded");
-    const isFailed = (r.verification_status === "Not Verified" || r.verification_status === "Verification Error" || r.verification_status === "Incomplete Details" || r.verification_status === "Not Found on Verixa" || r.verification_status === "Record Not Found");
+    const isServerError = (r.verification_status === "Server Error" || /server\s*error|500|502|503|504|bad\s*gateway|gateway\s*timeout/i.test(r.remarks || ""));
+    const isFailed = !isVerified && !isServerError && (r.verification_status === "Not Verified" || r.verification_status === "Verification Error" || r.verification_status === "Incomplete Details" || r.verification_status === "Not Found on Verixa" || r.verification_status === "Record Not Found");
 
-    // Exactly matching user requirement: If verified write "Verified" (or "Verified & Uploaded"), if not write "Not Verified"
-    base["Verification Status"] = isVerified 
-      ? (r.verification_status === "Verified & Uploaded" || r.upload_status === "Uploaded" ? "Verified & Uploaded" : "Verified")
-      : (isFailed ? "Not Verified" : (r.verification_status || "Pending"));
-    
-    base["Verification Date"] = r.verification_date || "";
-    base["Verification Remarks"] = r.remarks || (isVerified ? "Verified on Surepass" : (isFailed ? "Not Verified" : "Pending"));
-    
-    // Verixa Certificate Upload
-    base["Verixa Certificate Upload"] = (r.verification_status === "Verified & Uploaded" || r.upload_status === "Uploaded") 
-      ? "Uploaded to Verixa" 
-      : (isFailed ? "Skipped (Not Verified)" : (r.upload_status || "Pending"));
-    
-    base["Report Filename"] = isVerified ? (r.report_filename || "") : "N/A (Not Verified)";
-
-    // Processing Status column (accurately distinguishes success vs failure)
+    // Strictly match requirements:
+    // If verified -> "Verified" (or "Verified & Uploaded")
+    // If server error -> "Server Error"
+    // If not verified -> "Not Verified"
     if (isVerified) {
+      base["Verification Status"] = (r.verification_status === "Verified & Uploaded" || r.upload_status === "Uploaded") ? "Verified & Uploaded" : "Verified";
+      base["Verification Remarks"] = r.remarks || "Verified on Surepass";
+      base["Verixa Certificate Upload"] = "Uploaded to Verixa";
+      base["Report Filename"] = r.report_filename || "";
       base["Processing Status"] = "Completed - Verified";
+    } else if (isServerError) {
+      base["Verification Status"] = "Server Error";
+      base["Verification Remarks"] = r.remarks || "Server Error (Surepass / SARATHI service temporarily unavailable)";
+      base["Verixa Certificate Upload"] = "Skipped (Server Error)";
+      base["Report Filename"] = "N/A (Server Error)";
+      base["Processing Status"] = `Completed - Server Error (${r.remarks || 'Upstream Server Error'})`;
     } else if (isFailed) {
+      base["Verification Status"] = "Not Verified";
+      base["Verification Remarks"] = r.remarks || "Not Verified";
+      base["Verixa Certificate Upload"] = "Skipped (Not Verified)";
+      base["Report Filename"] = "N/A (Not Verified)";
       base["Processing Status"] = `Completed - Not Verified (${r.remarks || 'Failed on Surepass'})`;
     } else {
+      base["Verification Status"] = r.verification_status || "Pending";
+      base["Verification Remarks"] = r.remarks || "Pending";
+      base["Verixa Certificate Upload"] = r.upload_status || "Pending";
+      base["Report Filename"] = "Pending";
       base["Processing Status"] = "Pending";
     }
     return base;
@@ -1367,12 +1375,17 @@ async function runAutomationLoop() {
     if (!result || !result.success || result.status !== "Verified") {
       const errStatus = result?.status || "Not Verified";
       const errRemarks = result?.remarks || "Failed to verify on Surepass portal";
-      driver.verification_status = errStatus === "Login Required" ? "Login Required" : "Not Verified";
+      
+      const isServerErr = errStatus === "Server Error" || /server\s*error|500|502|503|504|bad\s*gateway|gateway\s*timeout/i.test(errRemarks);
+      driver.verification_status = errStatus === "Login Required" 
+        ? "Login Required" 
+        : (isServerErr ? "Server Error" : "Not Verified");
+
       driver.verification_date = new Date().toLocaleString();
       driver.remarks = errRemarks;
-      driver.upload_status = "Skipped (Verification Failed)";
+      driver.upload_status = isServerErr ? "Skipped (Server Error)" : "Skipped (Verification Failed)";
       driver.report_download_status = "Skipped";
-      log(`⛔ [Surepass] ${errStatus}: ${errRemarks}. STRICTLY SKIPPING Verixa upload for ${driver.gsm_id}.`, "warn");
+      log(`⛔ [Surepass] ${driver.verification_status}: ${errRemarks}. STRICTLY SKIPPING Verixa upload for ${driver.gsm_id}.`, "warn");
 
       if (errStatus === "Login Required") {
         log("⚠️ Please log in to Surepass in the open tab! Automation will pause...", "warn");
