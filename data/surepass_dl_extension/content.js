@@ -226,36 +226,29 @@ async function waitForElement(finderFn, timeoutMs = 8000) {
   return null;
 }
 
-// React-compatible input typing (clears input first so text is never appended)
+// React-compatible input typing (directly invokes prototype setter; never uses execCommand)
 function setInputValue(input, value) {
   if (!input) return;
+
+  // Unfocus any previously active element
+  if (document.activeElement && document.activeElement !== input) {
+    try { document.activeElement.blur(); } catch (e) {}
+  }
   input.focus();
 
-  // 1. Force value to empty string first to avoid appending to existing text
-  const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value") ||
+  // Use prototype setter so React/Vue synthetic events register the change cleanly
+  const prototype = Object.getPrototypeOf(input);
+  const desc = Object.getOwnPropertyDescriptor(prototype, "value") ||
                Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+
   if (desc && desc.set) {
-    desc.set.call(input, "");
+    desc.set.call(input, value);
   } else {
-    input.value = "";
+    input.value = value;
   }
+
+  // Dispatch events directly to target element
   input.dispatchEvent(new Event("input", { bubbles: true }));
-
-  // 2. Set clean value
-  let typed = false;
-  try {
-    input.select();
-    typed = document.execCommand("insertText", false, value);
-  } catch (e) {}
-
-  if (!typed || input.value !== value) {
-    if (desc && desc.set) {
-      desc.set.call(input, value);
-    } else {
-      input.value = value;
-    }
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  }
   input.dispatchEvent(new Event("change", { bubbles: true }));
   input.dispatchEvent(new Event("blur", { bubbles: true }));
 }
@@ -298,10 +291,11 @@ async function verifyDriverOnPage(driver) {
     };
   }
 
-  // Type DL number strictly into dlInput
-  console.log(`[Surepass Assistant] Entering DL Number strictly into ID Number field: "${cleanDl || rawDl}"`);
-  setInputValue(dlInput, cleanDl || rawDl);
-  await sleep(400);
+  // 1. Type DL number strictly into dlInput
+  const targetDl = cleanDl || rawDl;
+  console.log(`[Surepass Assistant] Entering DL Number strictly into ID Number field: "${targetDl}"`);
+  setInputValue(dlInput, targetDl);
+  await sleep(350);
 
   // 2. Locate and Fill DOB strictly into dobInput (guaranteed distinct from dlInput)
   if (driver.dob && dobInput && dobInput !== dlInput) {
@@ -312,10 +306,17 @@ async function verifyDriverOnPage(driver) {
 
     // If the field rejected spaces or cleared, fallback with hyphens
     if (!dobInput.value || dobInput.value.length < 6) {
-      const hyphenDob = formattedDob.replace(/\s+/g, "-");
-      setInputValue(dobInput, hyphenDob);
+      const fallbackDob = dobInput.type === "date" ? formattedDob : formattedDob.replace(/\s+/g, "-");
+      setInputValue(dobInput, fallbackDob);
       await sleep(200);
     }
+  }
+
+  // 3. STRICT SANITY GUARD: Ensure dlInput contains ONLY targetDl and was NOT appended with DOB!
+  if (dlInput.value !== targetDl) {
+    console.warn(`[Surepass Assistant] Guard caught corrupted DL value ("${dlInput.value}"). Resetting strictly to "${targetDl}"`);
+    setInputValue(dlInput, targetDl);
+    await sleep(200);
   }
 
   // 3. Locate and click Submit / Verify button

@@ -30,35 +30,29 @@ async function waitForElement(fn, timeout = 10000) {
   return null;
 }
 
-// React-compatible input typing
+// React-compatible input typing (directly invokes prototype setter; never uses execCommand)
 function setInputValue(input, value) {
   if (!input) return;
+
+  // Unfocus any previously active element
+  if (document.activeElement && document.activeElement !== input) {
+    try { document.activeElement.blur(); } catch (e) {}
+  }
   input.focus();
 
-  const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value") ||
+  // Use prototype setter so React/Vue synthetic events register the change cleanly
+  const prototype = Object.getPrototypeOf(input);
+  const desc = Object.getOwnPropertyDescriptor(prototype, "value") ||
                Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+
   if (desc && desc.set) {
-    desc.set.call(input, "");
+    desc.set.call(input, value);
   } else {
-    input.value = "";
+    input.value = value;
   }
+
+  // Dispatch events directly to target element
   input.dispatchEvent(new Event("input", { bubbles: true }));
-
-  let typed = false;
-  try {
-    input.select();
-    typed = document.execCommand("insertText", false, value);
-  } catch (e) {}
-
-  if (!typed || input.value !== value) {
-    if (desc && desc.set) {
-      desc.set.call(input, value);
-    } else {
-      input.value = value;
-    }
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  }
-
   input.dispatchEvent(new Event("change", { bubbles: true }));
   input.dispatchEvent(new Event("blur", { bubbles: true }));
 }
