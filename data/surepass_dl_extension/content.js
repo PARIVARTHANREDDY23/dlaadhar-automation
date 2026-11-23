@@ -226,36 +226,29 @@ async function waitForElement(finderFn, timeoutMs = 8000) {
   return null;
 }
 
-// React-compatible input typing (clears input first so text is never appended)
+// React-compatible input typing (directly invokes prototype setter; never uses execCommand to avoid selection bleeding)
 function setInputValue(input, value) {
   if (!input) return;
+
+  // Unfocus any previously active element
+  if (document.activeElement && document.activeElement !== input) {
+    try { document.activeElement.blur(); } catch (e) {}
+  }
   input.focus();
 
-  // 1. Force value to empty string first to avoid appending to existing text
-  const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value") ||
+  // Use prototype setter so React/Vue synthetic state managers register the change cleanly
+  const prototype = Object.getPrototypeOf(input);
+  const desc = Object.getOwnPropertyDescriptor(prototype, "value") ||
                Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+
   if (desc && desc.set) {
-    desc.set.call(input, "");
+    desc.set.call(input, value);
   } else {
-    input.value = "";
+    input.value = value;
   }
+
+  // Dispatch events directly to target element
   input.dispatchEvent(new Event("input", { bubbles: true }));
-
-  // 2. Set clean value
-  let typed = false;
-  try {
-    input.select();
-    typed = document.execCommand("insertText", false, value);
-  } catch (e) {}
-
-  if (!typed || input.value !== value) {
-    if (desc && desc.set) {
-      desc.set.call(input, value);
-    } else {
-      input.value = value;
-    }
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  }
   input.dispatchEvent(new Event("change", { bubbles: true }));
   input.dispatchEvent(new Event("blur", { bubbles: true }));
 }
@@ -276,6 +269,7 @@ async function verifyDriverOnPage(driver) {
 
   const cleanDl = String(driver.dl_number || "").replace(/[\s-]/g, "").trim().toUpperCase();
   const rawDl = String(driver.dl_number || "").trim().toUpperCase();
+  const targetDl = cleanDl || rawDl;
 
   // 1. Locate DL and DOB inputs with strict isolation
   const inputPair = await waitForElement(() => {
@@ -295,12 +289,15 @@ async function verifyDriverOnPage(driver) {
   }
 
   // Type DL number strictly into dlInput
-  console.log(`[Surepass Assistant] Entering DL Number strictly into ID Number field: "${cleanDl || rawDl}"`);
-  setInputValue(dlInput, cleanDl || rawDl);
-  await sleep(400);
+  console.log(`[Surepass Assistant] Entering DL Number strictly into ID Number field: "${targetDl}"`);
+  setInputValue(dlInput, targetDl);
+  await sleep(350);
 
   // 2. Locate and Fill DOB strictly into dobInput (guaranteed distinct from dlInput)
   if (driver.dob && dobInput && dobInput !== dlInput) {
+    // Explicitly blur dlInput first so no active caret remains in DL field!
+    try { dlInput.blur(); } catch (e) {}
+    
     const formattedDob = formatDobForInput(driver.dob, dobInput.type);
     console.log(`[Surepass Assistant] Entering DOB strictly into DOB field: "${formattedDob}"`);
     setInputValue(dobInput, formattedDob);
@@ -308,13 +305,29 @@ async function verifyDriverOnPage(driver) {
 
     // If the field rejected spaces or cleared, fallback with hyphens
     if (!dobInput.value || dobInput.value.length < 6) {
-      const hyphenDob = formattedDob.replace(/\s+/g, "-");
-      setInputValue(dobInput, hyphenDob);
+      const fallbackDob = dobInput.type === "date" ? formattedDob : formattedDob.replace(/\s+/g, "-");
+      setInputValue(dobInput, fallbackDob);
       await sleep(200);
     }
   }
 
-  // 3. Locate and click Submit / Verify button
+  // 3. STRICT SANITY GUARD: Ensure dlInput contains ONLY targetDl and was NOT appended with DOB!
+  if (dlInput.value !== targetDl) {
+    console.warn(`[Surepass Assistant] Sanity Guard caught contaminated DL value ("${dlInput.value}"). Resetting strictly to "${targetDl}"`);
+    setInputValue(dlInput, targetDl);
+    await sleep(200);
+  }
+
+  // Direct prototype fallback if any framework tried to re-contaminate DL input
+  if (dlInput.value !== targetDl) {
+    const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+    if (desc && desc.set) desc.set.call(dlInput, targetDl);
+    else dlInput.value = targetDl;
+    dlInput.dispatchEvent(new Event("input", { bubbles: true }));
+    dlInput.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  // 4. Locate and click Submit / Verify button
   const submitBtn = await waitForElement(() => {
     const candidates = Array.from(document.querySelectorAll("button, input[type='submit'], [role='button']")).filter(btn => {
       const txt = (btn.innerText || btn.value || "").toLowerCase().trim();
