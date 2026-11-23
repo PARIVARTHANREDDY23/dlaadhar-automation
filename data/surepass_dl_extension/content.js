@@ -337,6 +337,15 @@ async function verifyDriverOnPage(driver) {
     await sleep(300);
   }
 
+  // Reset any cached blob from previous operations
+  lastCapturedPdfBlob = null;
+  lastOpenedReportUrl = null;
+
+  // Capture pre-existing card on screen so we don't accidentally match an old candidate's result
+  const initialCard = extractSurepassCardDetails();
+  const initialClientId = initialCard?.["Client ID"] || "";
+  const initialLic = (initialCard?.["License Number"] || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+
   submitBtn.click();
   try { submitBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); } catch (e) {}
   console.log("[Surepass Assistant] Submit clicked. Awaiting verification response...");
@@ -369,42 +378,60 @@ async function verifyDriverOnPage(driver) {
       break;
     }
 
-    // B. Check for Not Verified / Invalid DL
-    if (bodyLower.includes("record not found") || 
+    // B. Check for Not Verified / Invalid DL / Record Not Found / Errors
+    const errToast = document.querySelector(".toast-error, .alert-danger, .ant-notification-error, [role=alert], .error-message, .swal2-error, .v-alert, .toast--error");
+    const errToastText = errToast && errToast.offsetParent !== null ? (errToast.innerText || "").trim() : "";
+
+    const hasFailureKeywords = 
+        bodyLower.includes("record not found") || 
         bodyLower.includes("no record found") || 
         bodyLower.includes("invalid id number") || 
         bodyLower.includes("invalid dl") || 
         bodyLower.includes("invalid driving license") || 
+        bodyLower.includes("driving licence not found") || 
+        bodyLower.includes("failed to verify") || 
+        bodyLower.includes("verification failed") || 
+        bodyLower.includes("details not found") || 
+        bodyLower.includes("no details found") || 
+        bodyLower.includes("unable to verify") || 
+        bodyLower.includes("does not exist") || 
+        bodyLower.includes("invalid date of birth") || 
         bodyText.includes('"status_code": 404') || 
         bodyText.includes('"status_code": 422') || 
         bodyText.includes('"status_code": 400') ||
-        (bodyText.includes('"success": false') && !bodyText.includes('"success": true'))) {
+        bodyText.includes('"status": "failed"') ||
+        bodyText.includes('"status": "error"') ||
+        (bodyText.includes('"success": false') && !bodyText.includes('"success": true'));
+
+    if (hasFailureKeywords || errToastText) {
       finalStatus = "Not Verified";
-      remarks = "Record Not Found or Invalid DL Number";
+      remarks = errToastText || "Record Not Found or Invalid DL Number";
+      console.log(`[Surepass Assistant] Explicit failure detected: "${remarks}"`);
       break;
     }
 
-    // C. Check for Live Success (Response Card or 200 Success status)
-    const hasResponseCard = (bodyLower.includes("response") || bodyLower.includes("data")) && 
-                            (bodyLower.includes("client id") || bodyLower.includes("license number") || bodyLower.includes("permanent address"));
-    const hasSuccessBadge = (bodyLower.includes("200") && (bodyLower.includes("success") || bodyLower.includes("ok"))) || bodyText.includes('"status_code": 200');
-    const hasActiveDetails = bodyLower.includes("dl details found") || bodyLower.includes("status: active") || bodyLower.includes("verification successful") || bodyLower.includes("status: valid");
-    const hasDriverDl = (cleanDl && (bodyText.includes(cleanDl) || bodyLower.includes(cleanDl.toLowerCase()))) || 
-                        (rawDl && (bodyText.includes(rawDl) || bodyLower.includes(rawDl.toLowerCase())));
-    const hasDownloadBtn = Array.from(document.querySelectorAll("button, a, [role='button']")).some(b => 
-      /download/i.test(b.innerText || "") && b.offsetParent !== null
-    );
+    // C. Check for Genuine Positive Verification for THIS Specific Driver
+    // Note: We deliberately do NOT rely on hasDownloadBtn or generic response cards from previous drivers!
+    const currentCard = extractSurepassCardDetails();
+    const currentLic = (currentCard?.["License Number"] || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+    const currentName = (currentCard?.["Name"] || "").trim().toLowerCase();
+    const currentClient = currentCard?.["Client ID"] || "";
 
-    if ((hasResponseCard && (hasDriverDl || hasDownloadBtn)) || (hasSuccessBadge && hasDriverDl) || (hasActiveDetails && hasDriverDl)) {
+    const isThisDriverDl = cleanDl && currentLic.length > 5 && (currentLic.includes(cleanDl) || cleanDl.includes(currentLic));
+    const hasValidCandidateName = currentName && currentName !== "null" && currentName !== "undefined" && currentName !== "-" && currentName.length > 1;
+    const isNewOrUpdatedCard = (!initialClientId || currentClient !== initialClientId || currentLic !== initialLic);
+
+    if (isThisDriverDl && hasValidCandidateName && isNewOrUpdatedCard) {
       finalStatus = "Verified";
       remarks = "Driver Licence Verified Successfully (Surepass Active)";
+      console.log(`[Surepass Assistant] Positive match confirmed for DL: ${cleanDl}, Name: ${currentCard["Name"]}`);
       break;
     }
   }
 
   if (!finalStatus) {
-    finalStatus = "Verification Error";
-    remarks = "Verification response timeout from Surepass portal";
+    finalStatus = "Not Verified";
+    remarks = "Verification response timeout or no valid match returned from Surepass";
   }
 
   // 5. If Verified, extract card details and locate download trigger
@@ -490,7 +517,7 @@ async function verifyDriverOnPage(driver) {
   }
 
   return {
-    success: finalStatus === "Verified" || finalStatus === "Not Verified",
+    success: finalStatus === "Verified",
     status: finalStatus,
     remarks: remarks,
     pdf_downloaded: surepassPdfTriggered,
