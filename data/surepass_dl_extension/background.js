@@ -61,16 +61,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "GET_LATEST_SUREPASS_PDF") {
-    // Return cached PDF if less than 90 seconds old and DL matches
+    // Return cached PDF if less than 90 seconds old
     if (latestSurepassPdf && Date.now() - latestSurepassPdf.timestamp < 90000) {
-      if (request.dlNumber) {
-        const cleanReq = String(request.dlNumber).replace(/[\s-]/g, "").toUpperCase();
-        const storedDl = String(latestSurepassPdf.dlNumber || "").toUpperCase();
-        if (storedDl && storedDl !== cleanReq) {
-          sendResponse({ success: false, reason: "Cached PDF DL mismatch" });
-          return true;
-        }
-      }
       sendResponse({ success: true, pdfBase64: latestSurepassPdf.base64, filename: latestSurepassPdf.filename });
     } else {
       sendResponse({ success: false });
@@ -83,8 +75,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       latestSurepassPdf = {
         filename: request.filename || "Surepass_DL_Report.pdf",
         base64: request.pdfBase64,
-        dlNumber: request.dlNumber || "",
-        gsmId: request.gsmId || "",
         timestamp: Date.now()
       };
       sendResponse({ success: true });

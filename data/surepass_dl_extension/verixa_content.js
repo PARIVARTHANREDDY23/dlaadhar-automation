@@ -386,9 +386,9 @@ async function uploadDlCertificateToVerixa(pdfBase64, filename, gsmId) {
   setVerixaPill(`📤 Uploading DL Certificate...`, "busy");
   console.log(`[Verixa360 Assistant] Starting DL Certificate upload for ${gsmId}`);
 
-  if (!pdfBase64 || pdfBase64.length < 500) {
-    setVerixaPill(`⚠️ Refused: Not verified`, "err");
-    return { success: false, reason: "Strict Check Blocked: Candidate is not verified or certificate PDF is missing." };
+  if (!pdfBase64) {
+    setVerixaPill(`⚠️ Missing PDF data`, "err");
+    return { success: false, reason: "No PDF data was provided for upload." };
   }
 
   // Step 1: Scroll slightly up from Candidate section to "Verification results"

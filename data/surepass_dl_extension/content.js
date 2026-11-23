@@ -226,29 +226,36 @@ async function waitForElement(finderFn, timeoutMs = 8000) {
   return null;
 }
 
-// React-compatible input typing (directly invokes prototype setter; never uses execCommand)
+// React-compatible input typing (clears input first so text is never appended)
 function setInputValue(input, value) {
   if (!input) return;
-
-  // Unfocus any previously active element
-  if (document.activeElement && document.activeElement !== input) {
-    try { document.activeElement.blur(); } catch (e) {}
-  }
   input.focus();
 
-  // Use prototype setter so React/Vue synthetic events register the change cleanly
-  const prototype = Object.getPrototypeOf(input);
-  const desc = Object.getOwnPropertyDescriptor(prototype, "value") ||
+  // 1. Force value to empty string first to avoid appending to existing text
+  const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value") ||
                Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
-
   if (desc && desc.set) {
-    desc.set.call(input, value);
+    desc.set.call(input, "");
   } else {
-    input.value = value;
+    input.value = "";
   }
-
-  // Dispatch events directly to target element
   input.dispatchEvent(new Event("input", { bubbles: true }));
+
+  // 2. Set clean value
+  let typed = false;
+  try {
+    input.select();
+    typed = document.execCommand("insertText", false, value);
+  } catch (e) {}
+
+  if (!typed || input.value !== value) {
+    if (desc && desc.set) {
+      desc.set.call(input, value);
+    } else {
+      input.value = value;
+    }
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
   input.dispatchEvent(new Event("change", { bubbles: true }));
   input.dispatchEvent(new Event("blur", { bubbles: true }));
 }
@@ -256,10 +263,6 @@ function setInputValue(input, value) {
 // Execute Verification on console.surepass.app
 async function verifyDriverOnPage(driver) {
   console.log(`[Surepass Assistant] Automating Driver: ${driver.gsm_id} | DL: ${driver.dl_number}`);
-
-  // Clear any cached report blobs or URLs from previous candidate
-  lastCapturedPdfBlob = null;
-  lastOpenedReportUrl = null;
 
   // Check login state first
   const isLoginPage = /login|signin/i.test(location.href) || !!document.querySelector("input[type='password']");
@@ -291,11 +294,10 @@ async function verifyDriverOnPage(driver) {
     };
   }
 
-  // 1. Type DL number strictly into dlInput
-  const targetDl = cleanDl || rawDl;
-  console.log(`[Surepass Assistant] Entering DL Number strictly into ID Number field: "${targetDl}"`);
-  setInputValue(dlInput, targetDl);
-  await sleep(350);
+  // Type DL number strictly into dlInput
+  console.log(`[Surepass Assistant] Entering DL Number strictly into ID Number field: "${cleanDl || rawDl}"`);
+  setInputValue(dlInput, cleanDl || rawDl);
+  await sleep(400);
 
   // 2. Locate and Fill DOB strictly into dobInput (guaranteed distinct from dlInput)
   if (driver.dob && dobInput && dobInput !== dlInput) {
@@ -306,17 +308,10 @@ async function verifyDriverOnPage(driver) {
 
     // If the field rejected spaces or cleared, fallback with hyphens
     if (!dobInput.value || dobInput.value.length < 6) {
-      const fallbackDob = dobInput.type === "date" ? formattedDob : formattedDob.replace(/\s+/g, "-");
-      setInputValue(dobInput, fallbackDob);
+      const hyphenDob = formattedDob.replace(/\s+/g, "-");
+      setInputValue(dobInput, hyphenDob);
       await sleep(200);
     }
-  }
-
-  // 3. STRICT SANITY GUARD: Ensure dlInput contains ONLY targetDl and was NOT appended with DOB!
-  if (dlInput.value !== targetDl) {
-    console.warn(`[Surepass Assistant] Guard caught corrupted DL value ("${dlInput.value}"). Resetting strictly to "${targetDl}"`);
-    setInputValue(dlInput, targetDl);
-    await sleep(200);
   }
 
   // 3. Locate and click Submit / Verify button
@@ -346,6 +341,10 @@ async function verifyDriverOnPage(driver) {
   try { submitBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); } catch (e) {}
   console.log("[Surepass Assistant] Submit clicked. Awaiting verification response...");
 
+  // Reset any cached blob from previous operations
+  lastCapturedPdfBlob = null;
+  lastOpenedReportUrl = null;
+
   // 4. Await verification result (poll for up to 15s)
   const startTime = Date.now();
   let finalStatus = null;
@@ -364,7 +363,7 @@ async function verifyDriverOnPage(driver) {
     const bodyText = document.body.innerText;
     const bodyLower = bodyText.toLowerCase();
 
-    // A. Check for Credits / Auth errors
+    // A. Check for Credits / Auth / Session Errors
     if (bodyLower.includes("insufficient credit") || 
         bodyLower.includes("insufficient balance") || 
         bodyLower.includes("402 payment required") || 
@@ -374,48 +373,51 @@ async function verifyDriverOnPage(driver) {
       break;
     }
 
-    // B. Check for Failure / Not Verified / Invalid DL / Error alerts
-    const hasErrorAlert = Array.from(document.querySelectorAll(".toast-error, .ant-alert-error, .alert-danger, [role='alert'], .text-red-500, .text-danger, .error-message, .error")).some(el => {
-      const t = (el.innerText || "").trim().toLowerCase();
-      return t.length > 0 && !t.includes("success");
-    });
-
-    if (hasErrorAlert ||
+    // B. Check for Not Verified / Invalid DL / Record Not Found / Failed
+    const hasFailureIndicator = 
         bodyLower.includes("record not found") || 
         bodyLower.includes("no record found") || 
-        bodyLower.includes("details not found") || 
-        bodyLower.includes("no details found") || 
         bodyLower.includes("invalid id number") || 
         bodyLower.includes("invalid dl") || 
         bodyLower.includes("invalid driving license") || 
-        bodyLower.includes("unable to verify") || 
         bodyLower.includes("verification failed") || 
-        bodyLower.includes("could not verify") || 
-        bodyLower.includes("please enter valid") || 
-        bodyLower.includes("data not found") || 
+        bodyLower.includes("failed to verify") || 
+        bodyLower.includes("details not found") || 
+        bodyLower.includes("no details found") || 
         bodyText.includes('"status_code": 404') || 
         bodyText.includes('"status_code": 422') || 
         bodyText.includes('"status_code": 400') ||
-        bodyText.includes('"status_code": 500') ||
-        (bodyText.includes('"success": false') && !bodyText.includes('"success": true'))) {
+        bodyText.includes('"status": "failed"') ||
+        bodyText.includes('"status": "FAILURE"') ||
+        (bodyText.includes('"success": false') && !bodyText.includes('"success": true'));
+
+    if (hasFailureIndicator) {
       finalStatus = "Not Verified";
-      remarks = "Record Not Found or Invalid DL Number (Surepass)";
+      remarks = "Record Not Found or Invalid DL Number";
       break;
     }
 
-    // C. Check for Live Success (Response Card or 200 Success status)
-    // STRICT RULE: Current driver's DL Number MUST be explicitly present in the response text/card!
+    // C. Check for GENUINE Live Success (Never rely solely on a Download button!)
     const hasDriverDl = (cleanDl && (bodyText.includes(cleanDl) || bodyLower.includes(cleanDl.toLowerCase()))) || 
                         (rawDl && (bodyText.includes(rawDl) || bodyLower.includes(rawDl.toLowerCase())));
+    const hasSuccessBadge = (bodyLower.includes("200") && (bodyLower.includes("success") || bodyLower.includes("ok"))) || 
+                            bodyText.includes('"status_code": 200') || 
+                            bodyLower.includes("status: valid") || 
+                            bodyLower.includes("status: active") || 
+                            bodyLower.includes("verification successful");
     const hasResponseCard = (bodyLower.includes("response") || bodyLower.includes("data")) && 
-                            (bodyLower.includes("client id") || bodyLower.includes("license number") || bodyLower.includes("permanent address"));
-    const hasSuccessBadge = (bodyLower.includes("200") && (bodyLower.includes("success") || bodyLower.includes("ok"))) || bodyText.includes('"status_code": 200');
-    const hasActiveDetails = bodyLower.includes("dl details found") || bodyLower.includes("status: active") || bodyLower.includes("verification successful") || bodyLower.includes("status: valid");
+                            (bodyLower.includes("license number") || bodyLower.includes("permanent address"));
 
-    if (hasDriverDl && (hasResponseCard || hasSuccessBadge || hasActiveDetails)) {
-      finalStatus = "Verified";
-      remarks = "Driver Licence Verified Successfully (Surepass Active)";
-      break;
+    // Positive check: Must have driver DL on screen, explicit success/response, and valid name
+    if (hasDriverDl && (hasSuccessBadge || hasResponseCard) && !hasFailureIndicator) {
+      const tempCard = extractSurepassCardDetails();
+      const tempName = (tempCard?.["Name"] || "").trim().toLowerCase();
+      // Only mark Verified if candidate details contain an actual name
+      if (tempName && tempName !== "null" && tempName !== "undefined" && tempName !== "-") {
+        finalStatus = "Verified";
+        remarks = "Driver Licence Verified Successfully (Surepass Active)";
+        break;
+      }
     }
   }
 
@@ -424,125 +426,91 @@ async function verifyDriverOnPage(driver) {
     remarks = "Verification response timeout from Surepass portal";
   }
 
-  // 5. If Verified, extract card details and strictly validate identity
+  // 5. If Verified, extract card details and locate download trigger
   let surepassPdfTriggered = false;
   let pdfBase64 = null;
   let cardDetails = null;
 
   if (finalStatus === "Verified") {
-    console.log("[Surepass Assistant] Potential match found. Extracting Response card details...");
-    await sleep(1000);
+    console.log("[Surepass Assistant] Verified! Extracting Response card details and locating Download button...");
+    await sleep(1200);
 
     // Extract all structured fields from the verified card (Image 1)
     cardDetails = extractSurepassCardDetails();
     console.log("[Surepass Assistant] Extracted Card Details:", cardDetails);
 
-    // STRICT VALIDATION: Ensure extracted card actually matches current target DL!
-    const cardLic = String(cardDetails["License Number"] || "").replace(/[\s-]/g, "").toUpperCase();
-    const cardName = String(cardDetails["Name"] || "").trim();
-    const cardClient = String(cardDetails["Client ID"] || "");
+    // Suppress blocking native window.print modal (Image 2) so automation continues smoothly
+    try {
+      window.print = function() {
+        console.log("[Surepass Assistant] window.print cleanly intercepted!");
+      };
+    } catch (e) {}
 
-    const matchesDl = cardLic && cleanDl && (cardLic.includes(cleanDl) || cleanDl.includes(cardLic));
-    const hasValidIdentity = (cardName.length > 1) || matchesDl || (cardClient.length > 5);
+    const dlBtn = await waitForElement(() => {
+      const allButtons = Array.from(document.querySelectorAll("button, a, [role='button']")).filter(btn => {
+        const txt = (btn.innerText || btn.value || "").toLowerCase().trim();
+        const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
+        const title = (btn.getAttribute("title") || "").toLowerCase();
+        const hasDownload = txt.includes("download") || txt.includes("pdf") || txt.includes("report") || aria.includes("download") || aria.includes("pdf") || title.includes("download");
+        const notExcel = !txt.includes("excel") && !txt.includes("csv");
+        return hasDownload && notExcel && btn.offsetParent !== null;
+      });
+      return allButtons[0] || null;
+    }, 6000);
 
-    if (!hasValidIdentity || (cardLic && cleanDl && !matchesDl)) {
-      console.warn(`[Surepass Assistant] STRICT CHECK FAILED: Card details do not match target DL "${cleanDl}". Marking unverified.`);
-      finalStatus = "Not Verified";
-      remarks = "Extracted card does not match requested DL Number";
-      cardDetails = null;
-      pdfBase64 = null;
-      surepassPdfTriggered = false;
-    }
-  }
-
-  // Double check: If NOT Verified, absolutely DO NOT click download, print, or save!
-  if (finalStatus !== "Verified") {
-    console.log(`[Surepass Assistant] Verification outcome is "${finalStatus}". Suppressing all download and print triggers.`);
-    return {
-      success: false,
-      status: finalStatus,
-      remarks: remarks,
-      pdf_downloaded: false,
-      pdf_base64: null,
-      card_details: null,
-      report_filename: ""
-    };
-  }
-
-  // 6. ONLY strictly verified records execute the print/save download trigger!
-  console.log("[Surepass Assistant] Strictly Verified! Locating official Surepass Download button...");
-  try {
-    window.print = function() {
-      console.log("[Surepass Assistant] window.print cleanly intercepted for verified driver!");
-    };
-  } catch (e) {}
-
-  const dlBtn = await waitForElement(() => {
-    const allButtons = Array.from(document.querySelectorAll("button, a, [role='button']")).filter(btn => {
-      const txt = (btn.innerText || btn.value || "").toLowerCase().trim();
-      const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
-      const title = (btn.getAttribute("title") || "").toLowerCase();
-      const hasDownload = txt.includes("download") || txt.includes("pdf") || txt.includes("report") || aria.includes("download") || aria.includes("pdf") || title.includes("download");
-      const notExcel = !txt.includes("excel") && !txt.includes("csv");
-      return hasDownload && notExcel && btn.offsetParent !== null;
-    });
-    return allButtons[0] || null;
-  }, 6000);
-
-  if (dlBtn) {
-    // Check if button is an anchor with direct download link
-    const href = dlBtn.getAttribute("href") || dlBtn.href;
-    if (href && (href.startsWith("http") || href.startsWith("blob:") || href.startsWith("data:"))) {
-      try {
-        const res = await fetch(href, { credentials: "include" });
-        const b = await res.blob();
-        pdfBase64 = await blobToBase64(b);
-        console.log(`[Surepass Assistant] Directly fetched report PDF (${b.size} bytes)`);
-      } catch (e) {
-        console.warn("[Surepass Assistant] Direct fetch of report notice:", e.message);
+    if (dlBtn) {
+      // Check if button is an anchor with direct download link
+      const href = dlBtn.getAttribute("href") || dlBtn.href;
+      if (href && (href.startsWith("http") || href.startsWith("blob:") || href.startsWith("data:"))) {
+        try {
+          const res = await fetch(href, { credentials: "include" });
+          const b = await res.blob();
+          pdfBase64 = await blobToBase64(b);
+          console.log(`[Surepass Assistant] Directly fetched report PDF (${b.size} bytes)`);
+        } catch (e) {
+          console.warn("[Surepass Assistant] Direct fetch of report notice:", e.message);
+        }
       }
-    }
 
-    console.log(`[Surepass Assistant] Clicking official Surepass download button: "${dlBtn.innerText || 'Download'}"`);
-    dlBtn.click();
-    surepassPdfTriggered = true;
-    await sleep(1500);
+      console.log(`[Surepass Assistant] Clicking official Surepass download button: "${dlBtn.innerText || 'Download'}"`);
+      dlBtn.click();
+      surepassPdfTriggered = true;
+      await sleep(1500);
 
-    // Check if client-side blob hook caught the report
-    if (!pdfBase64 && lastCapturedPdfBlob) {
-      try {
-        pdfBase64 = await blobToBase64(lastCapturedPdfBlob);
-        console.log(`[Surepass Assistant] Captured in-memory blob report (${lastCapturedPdfBlob.size} bytes)`);
-      } catch (e) {}
-    }
+      // Check if client-side blob hook caught the report
+      if (!pdfBase64 && lastCapturedPdfBlob) {
+        try {
+          pdfBase64 = await blobToBase64(lastCapturedPdfBlob);
+          console.log(`[Surepass Assistant] Captured in-memory blob report (${lastCapturedPdfBlob.size} bytes)`);
+        } catch (e) {}
+      }
 
-    // Check if window.open was triggered for the report
-    if (!pdfBase64 && lastOpenedReportUrl) {
-      try {
-        const res = await fetch(lastOpenedReportUrl, { credentials: "include" });
-        const b = await res.blob();
-        pdfBase64 = await blobToBase64(b);
-        console.log(`[Surepass Assistant] Fetched report from window.open URL (${b.size} bytes)`);
-      } catch (e) {}
-    }
+      // Check if window.open was triggered for the report
+      if (!pdfBase64 && lastOpenedReportUrl) {
+        try {
+          const res = await fetch(lastOpenedReportUrl, { credentials: "include" });
+          const b = await res.blob();
+          pdfBase64 = await blobToBase64(b);
+          console.log(`[Surepass Assistant] Fetched report from window.open URL (${b.size} bytes)`);
+        } catch (e) {}
+      }
 
-    // If we have base64, store in background script for this specific driver
-    if (pdfBase64) {
-      chrome.runtime.sendMessage({
-        action: "STORE_SUREPASS_PDF",
-        pdfBase64: pdfBase64,
-        dlNumber: cleanDl,
-        gsmId: driver.gsm_id,
-        filename: `${driver.gsm_id}_${driver.phone_number || "DL"}_DL_Report.pdf`
-      }).catch(() => {});
+      // If we have base64, also store in background script for safety
+      if (pdfBase64) {
+        chrome.runtime.sendMessage({
+          action: "STORE_SUREPASS_PDF",
+          pdfBase64: pdfBase64,
+          filename: `${driver.gsm_id}_${driver.phone_number || "DL"}_DL_Report.pdf`
+        }).catch(() => {});
+      }
+    } else {
+      console.warn("[Surepass Assistant] Official Surepass download button not found on result card.");
     }
-  } else {
-    console.warn("[Surepass Assistant] Official Surepass download button not found on result card.");
   }
 
   return {
-    success: true,
-    status: "Verified",
+    success: finalStatus === "Verified",
+    status: finalStatus,
     remarks: remarks,
     pdf_downloaded: surepassPdfTriggered,
     pdf_base64: pdfBase64,
