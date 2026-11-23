@@ -1335,6 +1335,11 @@ async function runAutomationLoop() {
       await sleep(300);
     } catch (e) {}
 
+    // Clear any stale cached report from previous driver in background script
+    try {
+      chrome.runtime.sendMessage({ action: "CLEAR_SUREPASS_PDF" });
+    } catch (e) {}
+
     let result = null;
     let attempts = 0;
     while (attempts < 2 && isAutomating) {
@@ -1359,14 +1364,33 @@ async function runAutomationLoop() {
 
     if (!isAutomating) break;
 
-    // Handle Unlogged in session or Verification Error (Do not download random dummy files!)
-    if (!result || !result.success || result.status === "Login Required" || result.status === "Verification Error") {
-      const errStatus = result?.status || "Verification Error";
-      const errRemarks = result?.remarks || "Failed to verify on Surepass portal";
+    // STRICT CHECK 1: Ensure result is genuinely verified and contains valid license data
+    const isStrictlyVerified = result && 
+                               result.success === true && 
+                               result.status === "Verified" &&
+                               (
+                                 (result.card_details && (result.card_details["License Number"] || result.card_details["Name"])) ||
+                                 (result.pdf_base64 && result.pdf_base64.length > 500)
+                               );
+
+    const nowIso = new Date().toLocaleString();
+
+    if (!isStrictlyVerified) {
+      // STRICT CONDITION: VERIFICATION FAILED OR UNVERIFIED — NEVER UPLOAD ANYTHING TO VERIXA!
+      const errStatus = (result?.status === "Login Required") ? "Login Required" : 
+                        (result?.status === "Not Verified") ? "Not Verified" : "Verification Failed";
+      const errRemarks = result?.remarks || "Verification failed on Surepass portal";
+
       driver.verification_status = errStatus;
-      driver.verification_date = new Date().toLocaleString();
+      driver.verification_date = nowIso;
       driver.remarks = errRemarks;
-      log(`⚠️ [Surepass] ${errStatus}: ${errRemarks}`, "warn");
+      driver.upload_status = "Skipped (Not Verified)";
+      driver.report_download_status = "Not Downloaded";
+      driver.report_filename = "";
+      driver.pdf_base64 = null;
+      driver.card_details = null;
+
+      log(`⛔ [Upload Blocked] Verification NOT successful for ${driver.gsm_id} (${errStatus}: ${errRemarks}). No document will be uploaded to Verixa.`, "warn");
 
       if (errStatus === "Login Required") {
         log("⚠️ Please log in to Surepass in the open tab! Automation will pause...", "warn");
@@ -1379,57 +1403,56 @@ async function runAutomationLoop() {
       chrome.storage.local.set({ localBatch: currentLocalBatch });
       updateUIFromBatch();
       await sleep(1500);
-      continue; // Skip without downloading any dummy PDF or file!
+      continue; // Strictly skip to next driver! DO NOT PROCEED TO VERIXA UPLOAD!
     }
 
-    const finalStatus = result.status; // "Verified" or "Not Verified"
-    const finalRemarks = result.remarks || (finalStatus === "Verified" ? "Verified on Surepass" : "Not Verified");
+    // --- ONLY STRICTLY VERIFIED DRIVERS WITH VALID CARD DETAILS PROCEED ---
+    const finalStatus = "Verified";
+    const finalRemarks = result.remarks || "Verified on Surepass";
     const reportFilename = `${driver.gsm_id}_${driver.phone_number || "DL"}_DL_Report.pdf`;
-    const nowIso = new Date().toLocaleString();
 
-    // Update driver state
     driver.verification_status = finalStatus;
     driver.verification_date = nowIso;
     driver.remarks = finalRemarks;
     driver.report_filename = reportFilename;
-    driver.card_details = result.card_details || driver.card_details || {};
+    driver.card_details = result.card_details || {};
+    driver.report_download_status = "Downloaded";
 
-    log(`✓ Outcome: ${finalStatus} (${finalRemarks})`, finalStatus === "Verified" ? "info" : "warn");
+    log(`✓ Outcome: Verified (${finalRemarks})`, "info");
+    log(`📥 Official Surepass report PDF saved to Downloads/Surepass_DL_Reports/`, "info");
 
-    // Official Surepass Report Download Confirmation & Auto-Upload to Verixa360
-    if (finalStatus === "Verified") {
-      driver.report_download_status = "Downloaded";
-      log(`📥 Official Surepass report PDF saved to Downloads/Surepass_DL_Reports/`, "info");
-
-      // Auto-upload DL Certificate back into Verixa under Verification results -> Driving licence certificate
-      let pdfToUpload = result.pdf_base64;
-      if (!pdfToUpload) {
-        // Query background script cache
-        try {
-          const bgPdf = await new Promise(resolve => {
-            chrome.runtime.sendMessage({ action: "GET_LATEST_SUREPASS_PDF" }, res => resolve(res));
-          });
-          if (bgPdf && bgPdf.success && bgPdf.pdfBase64) {
-            pdfToUpload = bgPdf.pdfBase64;
-          }
-        } catch (e) {}
-      }
-
-      // If PDF wasn't a direct file stream (since Surepass uses window.print), generate official Surepass Report PDF directly
-      if (!pdfToUpload) {
-        pdfToUpload = generateSurepassReportPdf(driver, result.card_details);
-        if (pdfToUpload) {
-          chrome.runtime.sendMessage({
-            action: "DOWNLOAD_FILE",
-            url: pdfToUpload,
-            filename: `Surepass_DL_Reports/${reportFilename}`
-          }, () => {});
+    // Auto-upload DL Certificate back into Verixa under Verification results -> Driving licence certificate
+    let pdfToUpload = result.pdf_base64;
+    if (!pdfToUpload) {
+      // Query background script cache specifically for this DL
+      try {
+        const bgPdf = await new Promise(resolve => {
+          chrome.runtime.sendMessage({ 
+            action: "GET_LATEST_SUREPASS_PDF",
+            dlNumber: driver.dl_number
+          }, res => resolve(res));
+        });
+        if (bgPdf && bgPdf.success && bgPdf.pdfBase64) {
+          pdfToUpload = bgPdf.pdfBase64;
         }
-      }
+      } catch (e) {}
+    }
 
+    // If PDF wasn't a direct file stream (since Surepass uses window.print), generate official Surepass Report PDF directly
+    if (!pdfToUpload) {
+      pdfToUpload = generateSurepassReportPdf(driver, result.card_details);
       if (pdfToUpload) {
-        driver.pdf_base64 = pdfToUpload;
-        log(`📤 [Verixa360] Uploading DL Certificate for ${driver.gsm_id}...`, "info");
+        chrome.runtime.sendMessage({
+          action: "DOWNLOAD_FILE",
+          url: pdfToUpload,
+          filename: `Surepass_DL_Reports/${reportFilename}`
+        }, () => {});
+      }
+    }
+
+    if (pdfToUpload) {
+      driver.pdf_base64 = pdfToUpload;
+      log(`📤 [Verixa360] Uploading DL Certificate for ${driver.gsm_id}...`, "info");
 
         // Verify verixaTab is still valid and reachable
         try {
@@ -1478,7 +1501,6 @@ async function runAutomationLoop() {
           }
         }
       }
-    }
 
     // Save updated queue to chrome.storage.local & live update Results Table
     chrome.storage.local.set({ localBatch: currentLocalBatch });
