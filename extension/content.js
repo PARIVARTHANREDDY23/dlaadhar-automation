@@ -77,9 +77,12 @@ function extractSurepassCardDetails() {
     "Client ID", "License Number", "State", "Name",
     "Permanent Address", "Permanent Zip", "Temporary Address",
     "Temporary Zip", "City Name", "Citizenship",
-    "Father Name", "Father/Husband Name", "DOB", "Date of Birth",
+    "Father Name", "Father/Husband Name", "Father Or Husband Name",
+    "DOB", "Date of Birth",
     "Gender", "Blood Group", "Badge Number", "Class of Vehicle",
-    "COV", "Issue Date", "Valid Till", "Non Transport", "Transport"
+    "COV", "Doi", "Doe", "Transport Doi", "Transport Doe",
+    "Date of Issue", "Date of Expiry", "Issue Date", "Valid Till",
+    "Non Transport", "Transport", "Ola Name", "Ola Code", "Has Image"
   ];
 
   // Strategy 1: Find individual field cards (Image 1: Each card has label on top and value below)
@@ -146,6 +149,59 @@ function extractSurepassCardDetails() {
   }
 
   return details;
+}
+
+// Evaluate if Driving Licence Date of Expiry (DOE) is before today's date
+function evaluateDlExpiry(doeStr, transportDoeStr) {
+  function parseDateSafe(str) {
+    if (!str || typeof str !== "string") return null;
+    const clean = str.trim();
+    if (!clean || clean === "-" || clean.toLowerCase() === "null" || clean.toLowerCase() === "undefined") return null;
+    // YYYY-MM-DD
+    let m = clean.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+    if (m) {
+      return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+    }
+    // DD-MM-YYYY
+    m = clean.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+    if (m) {
+      return new Date(parseInt(m[3], 10), parseInt(m[2], 10) - 1, parseInt(m[1], 10));
+    }
+    const d = new Date(clean);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const mainDate = parseDateSafe(doeStr);
+  const transDate = parseDateSafe(transportDoeStr);
+
+  if (mainDate) {
+    mainDate.setHours(0, 0, 0, 0);
+    const isExpired = mainDate.getTime() < today.getTime();
+    return {
+      isExpired,
+      status: isExpired ? "DL Expired" : "Not Expired",
+      doe: doeStr
+    };
+  }
+
+  if (transDate) {
+    transDate.setHours(0, 0, 0, 0);
+    const isExpired = transDate.getTime() < today.getTime();
+    return {
+      isExpired,
+      status: isExpired ? "DL Expired" : "Not Expired",
+      doe: transportDoeStr
+    };
+  }
+
+  return {
+    isExpired: false,
+    status: "Not Expired",
+    doe: doeStr || "-"
+  };
 }
 
 // Find element across document, iframes, and shadow roots
@@ -537,20 +593,34 @@ async function verifyDriverOnPage(driver) {
     remarks = "Verification response timeout or no valid match returned from Surepass";
   }
 
-  // 5. If Verified, extract card details and locate download trigger
+  // 5. If Verified, extract card details, capture DOI & DOE, evaluate expiry, and locate download trigger
   let surepassPdfTriggered = false;
   let pdfBase64 = null;
   let cardDetails = null;
+  let doi = "";
+  let doe = "";
+  let transportDoi = "";
+  let transportDoe = "";
+  let expiryResult = { isExpired: false, status: "Not Expired", doe: "-" };
 
   if (finalStatus === "Verified") {
-    console.log("[Surepass Assistant] Verified! Extracting Response card details and locating Download button...");
+    console.log("[Surepass Assistant] Verified! Extracting Response card details and capturing DOI & DOE...");
     await sleep(1200);
 
-    // Extract all structured fields from the verified card (Image 1)
+    // Extract all structured fields from the verified card (Image 1, 2, 3)
     cardDetails = extractSurepassCardDetails() || {};
     if (!cardDetails["License Number"]) cardDetails["License Number"] = driver.dl_number;
     if (!cardDetails["Name"]) cardDetails["Name"] = driver.driver_name || "Verified Candidate";
     console.log("[Surepass Assistant] Extracted Card Details:", cardDetails);
+
+    // Step: Capture DOI (Date of Issue) and DOE (Date of Expiry) before downloading
+    doi = cardDetails["Doi"] || cardDetails["Date of Issue"] || cardDetails["Issue Date"] || cardDetails["Transport Doi"] || "";
+    doe = cardDetails["Doe"] || cardDetails["Date of Expiry"] || cardDetails["Valid Till"] || "";
+    transportDoe = cardDetails["Transport Doe"] || "";
+    transportDoi = cardDetails["Transport Doi"] || "";
+    expiryResult = evaluateDlExpiry(doe, transportDoe);
+
+    console.log(`[Surepass Assistant] Captured DOI: "${doi}" | DOE: "${doe}" (Transport DOE: "${transportDoe}") | Expiry Status: "${expiryResult.status}"`);
 
     // Suppress blocking native window.print modal (Image 2) so automation continues smoothly
     try {
@@ -628,6 +698,12 @@ async function verifyDriverOnPage(driver) {
     pdf_downloaded: surepassPdfTriggered,
     pdf_base64: pdfBase64,
     card_details: cardDetails,
+    doi: doi,
+    doe: doe,
+    transport_doi: transportDoi,
+    transport_doe: transportDoe,
+    dl_expiry_status: expiryResult.status,
+    is_dl_expired: expiryResult.isExpired,
     report_filename: `${driver.gsm_id}_${driver.phone_number || "DL"}_DL_Report.pdf`
   };
 }

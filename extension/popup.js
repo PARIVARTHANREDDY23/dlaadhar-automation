@@ -109,6 +109,59 @@ function getRtoFromDl(dlNumber, stateName) {
   };
 }
 
+// Evaluate if Driving Licence Date of Expiry (DOE) is before today's date
+function evaluateDlExpiry(doeStr, transportDoeStr) {
+  function parseDateSafe(str) {
+    if (!str || typeof str !== "string") return null;
+    const clean = str.trim();
+    if (!clean || clean === "-" || clean.toLowerCase() === "null" || clean.toLowerCase() === "undefined") return null;
+    // YYYY-MM-DD
+    let m = clean.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+    if (m) {
+      return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+    }
+    // DD-MM-YYYY
+    m = clean.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+    if (m) {
+      return new Date(parseInt(m[3], 10), parseInt(m[2], 10) - 1, parseInt(m[1], 10));
+    }
+    const d = new Date(clean);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const mainDate = parseDateSafe(doeStr);
+  const transDate = parseDateSafe(transportDoeStr);
+
+  if (mainDate) {
+    mainDate.setHours(0, 0, 0, 0);
+    const isExpired = mainDate.getTime() < today.getTime();
+    return {
+      isExpired,
+      status: isExpired ? "DL Expired" : "Not Expired",
+      doe: doeStr
+    };
+  }
+
+  if (transDate) {
+    transDate.setHours(0, 0, 0, 0);
+    const isExpired = transDate.getTime() < today.getTime();
+    return {
+      isExpired,
+      status: isExpired ? "DL Expired" : "Not Expired",
+      doe: transportDoeStr
+    };
+  }
+
+  return {
+    isExpired: false,
+    status: "Not Expired",
+    doe: doeStr || "-"
+  };
+}
+
 // Generate Official Client-Side Verification Certificate 4-Page PDF via jsPDF
 // Matches Surepass "Print 4 sheets of paper" official layout exactly
 function generateSurepassReportPdf(driver, cardDetails) {
@@ -361,6 +414,13 @@ function generateSurepassReportPdf(driver, cardDetails) {
     // Validity Card 1: Non-Transport
     doc.setFillColor(248, 250, 252);
     doc.roundedRect(55, 160, width - 110, 85, 4, 4, "FD");
+    const pDoi = driver.doi || c["Doi"] || c["Date of Issue"] || c["Issue Date"] || "01-01-2016";
+    const pDoe = driver.doe || c["Doe"] || c["Date of Expiry"] || c["Valid Till"] || "31-12-2035";
+    const pTransDoi = driver.transport_doi || c["Transport Doi"] || pDoi;
+    const pTransDoe = driver.transport_doe || c["Transport Doe"] || "31-12-2028";
+    const pExpiryEval = evaluateDlExpiry(pDoe, pTransDoe);
+    const pExpiryStatus = driver.dl_expiry_status || pExpiryEval.status;
+
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.setTextColor(30, 41, 59);
@@ -368,9 +428,9 @@ function generateSurepassReportPdf(driver, cardDetails) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
     doc.setTextColor(71, 85, 105);
-    doc.text("Effective Issue Date: 01-01-2016", 68, 198);
-    doc.text("Valid Till: 31-12-2035 (20 Year Cycle / Age Rule)", 68, 214);
-    doc.text("Current Operational Status: ACTIVE & VALID", 68, 230);
+    doc.text(`Effective Issue Date (DOI): ${pDoi}`, 68, 198);
+    doc.text(`Valid Till (DOE): ${pDoe}`, 68, 214);
+    doc.text(`Current Operational Status: ${pExpiryStatus === 'DL Expired' ? 'EXPIRED (Past Valid Till)' : 'ACTIVE & VALID'}`, 68, 230);
     doc.text("Endorsement Authority: Regional Transport Office", 305, 198);
     doc.text("Renewal Type: Periodic Sarathi Extension", 305, 214);
 
@@ -384,9 +444,9 @@ function generateSurepassReportPdf(driver, cardDetails) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
     doc.setTextColor(71, 85, 105);
-    doc.text("Effective Issue Date: 01-01-2016", 68, 298);
-    doc.text("Valid Till: 31-12-2028 (5 Year Renewable Cycle)", 68, 314);
-    doc.text("Current Operational Status: VALID / COMPLIANT", 68, 330);
+    doc.text(`Effective Issue Date: ${pTransDoi}`, 68, 298);
+    doc.text(`Valid Till (Transport DOE): ${pTransDoe}`, 68, 314);
+    doc.text(`Commercial Operational Status: ${pExpiryStatus === 'DL Expired' ? 'EXPIRED' : 'VALID / COMPLIANT'}`, 68, 330);
     doc.text("Hazardous Goods Endorsement: Not Applicable", 305, 298);
     doc.text("Hill Terrain Driving Endorsement: Standard Authorized", 305, 314);
 
@@ -653,11 +713,18 @@ function renderRecordsTable() {
     else if (r.verification_status === "Server Error") { color = "#DC2626"; bg = "#FEF2F2"; }
     else if (r.verification_status === "Not Found on Verixa" || r.verification_status === "Invalid Details" || r.verification_status === "Verification Error") { color = "#BE123C"; bg = "#FFF1F2"; }
 
+    const expBadge = r.dl_expiry_status === "DL Expired"
+      ? `<span style="background:#FEE2E2; color:#B91C1C; font-size:8px; font-weight:700; padding:1px 4px; border-radius:3px; margin-left:3px;" title="DOE: ${escapeHtml(r.doe || '-')}">Expired</span>`
+      : (r.dl_expiry_status === "Not Expired" ? `<span style="background:#DCFCE7; color:#15803D; font-size:8px; font-weight:700; padding:1px 4px; border-radius:3px; margin-left:3px;" title="DOE: ${escapeHtml(r.doe || '-')}">Valid</span>` : "");
+
     return `
       <tr>
         <td style="color:#64748B; font-weight:700;">#${r.row_index}</td>
         <td style="font-weight:700; color:#0F172A; font-family:monospace;">${escapeHtml(r.gsm_id || "-")}</td>
-        <td><span style="background:${bg}; color:${color}; font-size:9px; font-weight:700; padding:2px 5px; border-radius:4px;">${escapeHtml(r.verification_status || "Pending")}</span></td>
+        <td>
+          <span style="background:${bg}; color:${color}; font-size:9px; font-weight:700; padding:2px 5px; border-radius:4px;">${escapeHtml(r.verification_status || "Pending")}</span>
+          ${expBadge}
+        </td>
         <td style="color:#64748B; font-size:9px;">
           <div style="display:flex; justify-content:space-between; align-items:center; gap:4px;">
             <span>${escapeHtml(r.remarks || "-")}</span>
@@ -933,16 +1000,34 @@ function exportUpdatedExcel() {
     const isServerError = (r.verification_status === "Server Error" || /server\s*error|500|502|503|504|bad\s*gateway|gateway\s*timeout/i.test(r.remarks || ""));
     const isFailed = !isVerified && !isServerError && (r.verification_status === "Not Verified" || r.verification_status === "Verification Error" || r.verification_status === "Incomplete Details" || r.verification_status === "Not Found on Verixa" || r.verification_status === "Record Not Found");
 
+    const doiVal = r.doi || r.card_details?.["Doi"] || r.card_details?.["Date of Issue"] || r.card_details?.["Issue Date"] || "";
+    const doeVal = r.doe || r.card_details?.["Doe"] || r.card_details?.["Date of Expiry"] || r.card_details?.["Valid Till"] || "";
+    const transDoeVal = r.transport_doe || r.card_details?.["Transport Doe"] || "";
+
+    let expiryStatus = r.dl_expiry_status || "";
+    if (!expiryStatus && isVerified) {
+      expiryStatus = evaluateDlExpiry(doeVal, transDoeVal).status;
+    }
+
+    base["DOI"] = doiVal || "-";
+    base["DOE"] = doeVal || "-";
+    if (transDoeVal) base["Transport DOE"] = transDoeVal;
+    base["DL Expiry Status"] = isVerified ? (expiryStatus || "Not Expired") : (isServerError ? "Server Error" : "Not Verified");
+
     // Strictly match requirements:
     // If verified -> "Verified" (or "Verified & Uploaded")
     // If server error -> "Server Error"
     // If not verified -> "Not Verified"
     if (isVerified) {
       base["Verification Status"] = (r.verification_status === "Verified & Uploaded" || r.upload_status === "Uploaded") ? "Verified & Uploaded" : "Verified";
-      base["Verification Remarks"] = r.remarks || "Verified on Surepass";
+      let vRemarks = r.remarks || "Verified on Surepass";
+      if (expiryStatus === "DL Expired" && !vRemarks.toLowerCase().includes("dl expired")) {
+        vRemarks += ` (DL Expired - DOE: ${doeVal})`;
+      }
+      base["Verification Remarks"] = vRemarks;
       base["Verixa Certificate Upload"] = "Uploaded to Verixa";
       base["Report Filename"] = r.report_filename || "";
-      base["Processing Status"] = "Completed - Verified";
+      base["Processing Status"] = `Completed - Verified (${expiryStatus || 'Active'})`;
     } else if (isServerError) {
       base["Verification Status"] = "Server Error";
       base["Verification Remarks"] = r.remarks || "Server Error (Surepass / SARATHI service temporarily unavailable)";
@@ -994,9 +1079,12 @@ async function copyGSheetResults() {
     return alert("No records to copy.");
   }
 
-  const lines = ["GSM ID\tName\tPhone Number\tDL Number\tDOB\tVerification Status\tVerification Date\tRemarks"];
+  const lines = ["GSM ID\tName\tPhone Number\tDL Number\tDOB\tDOI\tDOE\tDL Expiry Status\tVerification Status\tVerification Date\tRemarks"];
   currentLocalBatch.records.forEach(r => {
-    lines.push(`${r.gsm_id}\t${r.driver_name || ""}\t${r.phone_number || ""}\t${r.dl_number || ""}\t${r.dob || ""}\t${r.verification_status || "Pending"}\t${r.verification_date || ""}\t${r.remarks || ""}`);
+    const doiVal = r.doi || r.card_details?.["Doi"] || "-";
+    const doeVal = r.doe || r.card_details?.["Doe"] || "-";
+    const expVal = r.dl_expiry_status || (r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded" ? evaluateDlExpiry(doeVal, r.transport_doe).status : "-");
+    lines.push(`${r.gsm_id}\t${r.driver_name || ""}\t${r.phone_number || ""}\t${r.dl_number || ""}\t${r.dob || ""}\t${doiVal}\t${doeVal}\t${expVal}\t${r.verification_status || "Pending"}\t${r.verification_date || ""}\t${r.remarks || ""}`);
   });
 
   try {
@@ -1041,7 +1129,7 @@ async function downloadAllReportsZip() {
     const reportFolder = zip.folder(folderName);
 
     // Add a consolidated Verification_Summary.csv inside the ZIP
-    let csvContent = "Row,GSM ID,DL Number,Phone Number,Candidate Name,Verification Status,Verification Date,Remarks,Report Filename\n";
+    let csvContent = "Row,GSM ID,DL Number,Phone Number,Candidate Name,DOI,DOE,DL Expiry Status,Verification Status,Verification Date,Remarks,Report Filename\n";
 
     let idx = 0;
     for (const r of verifiedRecords) {
@@ -1061,7 +1149,11 @@ async function downloadAllReportsZip() {
         reportFolder.file(filename, base64Data, { base64: true });
       }
 
-      csvContent += `"${r.row_index}","${r.gsm_id || ''}","${r.dl_number || ''}","${r.phone_number || ''}","${r.driver_name || ''}","${r.verification_status || ''}","${r.verification_date || ''}","${(r.remarks || '').replace(/"/g, '""')}","${filename}"\n`;
+      const doiVal = r.doi || r.card_details?.["Doi"] || "-";
+      const doeVal = r.doe || r.card_details?.["Doe"] || "-";
+      const expVal = r.dl_expiry_status || evaluateDlExpiry(doeVal, r.transport_doe).status;
+
+      csvContent += `"${r.row_index}","${r.gsm_id || ''}","${r.dl_number || ''}","${r.phone_number || ''}","${r.driver_name || ''}","${doiVal}","${doeVal}","${expVal}","${r.verification_status || ''}","${r.verification_date || ''}","${(r.remarks || '').replace(/"/g, '""')}","${filename}"\n`;
 
       await sleep(25);
     }
@@ -1438,6 +1530,15 @@ async function runAutomationLoop() {
     driver.report_filename = reportFilename;
     driver.card_details = result.card_details || driver.card_details || {};
 
+    // Capture DOI and DOE and evaluate Expiry before proceeding to download/upload
+    driver.doi = result.doi || result.card_details?.["Doi"] || result.card_details?.["Date of Issue"] || result.card_details?.["Issue Date"] || "";
+    driver.doe = result.doe || result.card_details?.["Doe"] || result.card_details?.["Date of Expiry"] || result.card_details?.["Valid Till"] || "";
+    driver.transport_doi = result.transport_doi || result.card_details?.["Transport Doi"] || "";
+    driver.transport_doe = result.transport_doe || result.card_details?.["Transport Doe"] || "";
+    driver.dl_expiry_status = result.dl_expiry_status || evaluateDlExpiry(driver.doe, driver.transport_doe).status;
+    driver.is_dl_expired = (driver.dl_expiry_status === "DL Expired");
+
+    log(`📅 [Surepass] Captured DOI: ${driver.doi || '-'} | DOE: ${driver.doe || '-'} ➔ Status: ${driver.dl_expiry_status}`, driver.is_dl_expired ? "warn" : "info");
     log(`✓ Outcome: Verified (${finalRemarks})`, "info");
 
     // Official Surepass 4-Page Report Generation & Automatic Download
