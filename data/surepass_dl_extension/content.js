@@ -120,16 +120,24 @@ function formatDobForInput(dobStr, inputType) {
   return cleaned;
 }
 
-// Extract clean date string (YYYY-MM-DD or DD-MM-YYYY) from text
+// Extract clean date string (YYYY-MM-DD or DD-MM-YYYY) from text with 1800 sentinel filtering
 function extractDateFromText(text) {
   if (!text || typeof text !== "string") return "";
   const clean = text.trim();
   // 1. Match YYYY-MM-DD
-  const m1 = clean.match(/\b(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})\b/);
-  if (m1) return m1[1];
+  const m1 = clean.match(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/);
+  if (m1) {
+    const yr = parseInt(m1[1], 10);
+    if (yr <= 1900) return ""; // Neglect 1800-01-01 sentinel date
+    return `${m1[1]}-${m1[2].padStart(2, "0")}-${m1[3].padStart(2, "0")}`;
+  }
   // 2. Match DD-MM-YYYY
-  const m2 = clean.match(/\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b/);
-  if (m2) return m2[1];
+  const m2 = clean.match(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b/);
+  if (m2) {
+    const yr = parseInt(m2[3], 10);
+    if (yr <= 1900) return ""; // Neglect 01-01-1800 sentinel date
+    return `${m2[1].padStart(2, "0")}-${m2[2].padStart(2, "0")}-${m2[3]}`;
+  }
   return "";
 }
 
@@ -302,24 +310,29 @@ function extractSurepassCardDetails() {
   return details;
 }
 
-// Evaluate if Driving Licence Date of Expiry (DOE) is before today's date
+// Evaluate if Driving Licence Date of Expiry is before today's date
+// Permissive / Best-Case: If either Personal DOE or Transport DOE is valid, driver is Not Expired
+// Accurately ignores 1800-01-01 sentinel date and states the evaluation basis
 function evaluateDlExpiry(doeStr, transportDoeStr) {
   function parseDateSafe(str) {
     if (!str || typeof str !== "string") return null;
     const clean = str.trim();
     if (!clean || clean === "-" || clean.toLowerCase() === "null" || clean.toLowerCase() === "undefined") return null;
-    // YYYY-MM-DD
     let m = clean.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
     if (m) {
-      return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+      const yr = parseInt(m[1], 10);
+      if (yr <= 1900) return null; // Neglect 1800-01-01 sentinel
+      return new Date(yr, parseInt(m[2], 10) - 1, parseInt(m[3], 10));
     }
-    // DD-MM-YYYY
     m = clean.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
     if (m) {
-      return new Date(parseInt(m[3], 10), parseInt(m[2], 10) - 1, parseInt(m[1], 10));
+      const yr = parseInt(m[3], 10);
+      if (yr <= 1900) return null; // Neglect 01-01-1800 sentinel
+      return new Date(yr, parseInt(m[2], 10) - 1, parseInt(m[1], 10));
     }
     const d = new Date(clean);
-    return isNaN(d.getTime()) ? null : d;
+    if (isNaN(d.getTime()) || d.getFullYear() <= 1900) return null;
+    return d;
   }
 
   const today = new Date();
@@ -328,74 +341,101 @@ function evaluateDlExpiry(doeStr, transportDoeStr) {
   const mainDate = parseDateSafe(doeStr);
   const transDate = parseDateSafe(transportDoeStr);
 
-  if (mainDate) {
-    mainDate.setHours(0, 0, 0, 0);
-    const diffMs = mainDate.getTime() - today.getTime();
-    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-    if (diffDays < 0) {
-      return {
-        isExpired: true,
-        status: "DL Expired",
-        category: "expired",
-        diffDays,
-        doe: doeStr
-      };
-    } else if (diffDays <= 90) {
-      return {
-        isExpired: false,
-        status: "Expiring in 3 Months",
-        category: "expiring_soon",
-        diffDays,
-        doe: doeStr
-      };
-    } else {
-      return {
-        isExpired: false,
-        status: "Not Expired",
-        category: "valid",
-        diffDays,
-        doe: doeStr
-      };
-    }
+  function evalDate(d) {
+    if (!d) return null;
+    d.setHours(0, 0, 0, 0);
+    const diffDays = Math.ceil((d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDays < 0) return { category: "expired", diffDays };
+    if (diffDays <= 90) return { category: "expiring_soon", diffDays };
+    return { category: "valid", diffDays };
   }
 
-  if (transDate) {
-    transDate.setHours(0, 0, 0, 0);
-    const diffMs = transDate.getTime() - today.getTime();
-    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-    if (diffDays < 0) {
-      return {
-        isExpired: true,
-        status: "DL Expired",
-        category: "expired",
-        diffDays,
-        doe: transportDoeStr
-      };
-    } else if (diffDays <= 90) {
-      return {
-        isExpired: false,
-        status: "Expiring in 3 Months",
-        category: "expiring_soon",
-        diffDays,
-        doe: transportDoeStr
-      };
-    } else {
+  const mainEval = evalDate(mainDate);
+  const transEval = evalDate(transDate);
+
+  // Both Personal DOE and Transport DOE exist and are non-sentinel
+  if (mainEval && transEval) {
+    if (mainEval.category === "valid" && transEval.category === "valid") {
+      const useMain = mainEval.diffDays >= transEval.diffDays;
       return {
         isExpired: false,
         status: "Not Expired",
-        category: "valid",
-        diffDays,
-        doe: transportDoeStr
+        basis: useMain ? "Personal DOE" : "Transport DOE",
+        doe: useMain ? doeStr : transportDoeStr,
+        remarksNote: `Considered based on ${useMain ? 'Personal DOE: ' + doeStr : 'Transport DOE: ' + transportDoeStr}`
       };
     }
+    if (mainEval.category === "valid") {
+      return {
+        isExpired: false,
+        status: "Not Expired",
+        basis: "Personal DOE",
+        doe: doeStr,
+        remarksNote: `Considered based on Personal DOE: ${doeStr} (Note: Transport DOE ${transEval.category === 'expired' ? 'expired on ' + transportDoeStr : 'expires on ' + transportDoeStr})`
+      };
+    }
+    if (transEval.category === "valid") {
+      return {
+        isExpired: false,
+        status: "Not Expired",
+        basis: "Transport DOE",
+        doe: transportDoeStr,
+        remarksNote: `Considered based on Transport DOE: ${transportDoeStr} (Note: Personal DOE ${mainEval.category === 'expired' ? 'expired on ' + doeStr : 'expires on ' + doeStr})`
+      };
+    }
+    // Neither is valid, check if either is expiring within 3 months (90 days)
+    if (mainEval.category === "expiring_soon" || transEval.category === "expiring_soon") {
+      const useMain = mainEval.category === "expiring_soon" && (transEval.category !== "expiring_soon" || mainEval.diffDays >= transEval.diffDays);
+      return {
+        isExpired: false,
+        status: "Expiring in 3 Months",
+        basis: useMain ? "Personal DOE" : "Transport DOE",
+        doe: useMain ? doeStr : transportDoeStr,
+        remarksNote: `Expiring in 3 Months (Considered based on ${useMain ? 'Personal DOE: ' + doeStr : 'Transport DOE: ' + transportDoeStr})`
+      };
+    }
+    // Both are expired
+    return {
+      isExpired: true,
+      status: "DL Expired",
+      basis: "Both Expired",
+      doe: doeStr,
+      remarksNote: `DL Expired (Both Personal DOE: ${doeStr} and Transport DOE: ${transportDoeStr} are expired)`
+    };
+  }
+
+  // Only Personal DOE exists
+  if (mainEval) {
+    const isExp = mainEval.category === "expired";
+    const isSoon = mainEval.category === "expiring_soon";
+    return {
+      isExpired: isExp,
+      status: isExp ? "DL Expired" : (isSoon ? "Expiring in 3 Months" : "Not Expired"),
+      basis: "Personal DOE",
+      doe: doeStr,
+      remarksNote: `Considered based on Personal DOE: ${doeStr}`
+    };
+  }
+
+  // Only Transport DOE exists
+  if (transEval) {
+    const isExp = transEval.category === "expired";
+    const isSoon = transEval.category === "expiring_soon";
+    return {
+      isExpired: isExp,
+      status: isExp ? "DL Expired" : (isSoon ? "Expiring in 3 Months" : "Not Expired"),
+      basis: "Transport DOE",
+      doe: transportDoeStr,
+      remarksNote: `Considered based on Transport DOE: ${transportDoeStr}`
+    };
   }
 
   return {
     isExpired: false,
     status: "Not Expired",
-    category: "valid",
-    diffDays: 9999,
-    doe: doeStr || "-"
+    basis: "N/A",
+    doe: "-",
+    remarksNote: "No Expiry Date Specified"
   };
 }
 
@@ -929,6 +969,8 @@ async function verifyDriverOnPage(driver) {
     transport_doi: transportDoi,
     transport_doe: transportDoe,
     dl_expiry_status: expiryResult.status,
+    expiry_basis: expiryResult.basis,
+    remarks_note: expiryResult.remarksNote,
     is_dl_expired: expiryResult.isExpired,
     report_filename: `${driver.gsm_id}_${driver.phone_number || "DL"}_DL_Report.pdf`
   };

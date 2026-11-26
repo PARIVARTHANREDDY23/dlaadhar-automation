@@ -109,37 +109,50 @@ function getRtoFromDl(dlNumber, stateName) {
   };
 }
 
-// Extract clean date string (YYYY-MM-DD or DD-MM-YYYY) from text (never allows field labels like 'Transport Doe')
+// Extract clean date string (YYYY-MM-DD or DD-MM-YYYY) from text with 1800 sentinel filtering
 function extractDateFromText(text) {
   if (!text || typeof text !== "string") return "";
   const clean = text.trim();
   // 1. Match YYYY-MM-DD
-  const m1 = clean.match(/\b(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})\b/);
-  if (m1) return m1[1];
+  const m1 = clean.match(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/);
+  if (m1) {
+    const yr = parseInt(m1[1], 10);
+    if (yr <= 1900) return ""; // Neglect 1800-01-01 sentinel date
+    return `${m1[1]}-${m1[2].padStart(2, "0")}-${m1[3].padStart(2, "0")}`;
+  }
   // 2. Match DD-MM-YYYY
-  const m2 = clean.match(/\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b/);
-  if (m2) return m2[1];
+  const m2 = clean.match(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b/);
+  if (m2) {
+    const yr = parseInt(m2[3], 10);
+    if (yr <= 1900) return ""; // Neglect 01-01-1800 sentinel date
+    return `${m2[1].padStart(2, "0")}-${m2[2].padStart(2, "0")}-${m2[3]}`;
+  }
   return "";
 }
 
 // Evaluate if Driving Licence Date of Expiry (DOE) is before today's date
+// Permissive / Best-Case: If either Personal DOE or Transport DOE is valid, driver is Not Expired
+// Accurately ignores 1800-01-01 sentinel date and states the evaluation basis
 function evaluateDlExpiry(doeStr, transportDoeStr) {
   function parseDateSafe(str) {
     if (!str || typeof str !== "string") return null;
     const clean = str.trim();
     if (!clean || clean === "-" || clean.toLowerCase() === "null" || clean.toLowerCase() === "undefined") return null;
-    // YYYY-MM-DD
     let m = clean.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
     if (m) {
-      return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+      const yr = parseInt(m[1], 10);
+      if (yr <= 1900) return null; // Neglect 1800-01-01 sentinel
+      return new Date(yr, parseInt(m[2], 10) - 1, parseInt(m[3], 10));
     }
-    // DD-MM-YYYY
     m = clean.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
     if (m) {
-      return new Date(parseInt(m[3], 10), parseInt(m[2], 10) - 1, parseInt(m[1], 10));
+      const yr = parseInt(m[3], 10);
+      if (yr <= 1900) return null; // Neglect 01-01-1800 sentinel
+      return new Date(yr, parseInt(m[2], 10) - 1, parseInt(m[1], 10));
     }
     const d = new Date(clean);
-    return isNaN(d.getTime()) ? null : d;
+    if (isNaN(d.getTime()) || d.getFullYear() <= 1900) return null;
+    return d;
   }
 
   const today = new Date();
@@ -148,74 +161,101 @@ function evaluateDlExpiry(doeStr, transportDoeStr) {
   const mainDate = parseDateSafe(doeStr);
   const transDate = parseDateSafe(transportDoeStr);
 
-  if (mainDate) {
-    mainDate.setHours(0, 0, 0, 0);
-    const diffMs = mainDate.getTime() - today.getTime();
-    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-    if (diffDays < 0) {
-      return {
-        isExpired: true,
-        status: "DL Expired",
-        category: "expired",
-        diffDays,
-        doe: doeStr
-      };
-    } else if (diffDays <= 90) {
-      return {
-        isExpired: false,
-        status: "Expiring in 3 Months",
-        category: "expiring_soon",
-        diffDays,
-        doe: doeStr
-      };
-    } else {
-      return {
-        isExpired: false,
-        status: "Not Expired",
-        category: "valid",
-        diffDays,
-        doe: doeStr
-      };
-    }
+  function evalDate(d) {
+    if (!d) return null;
+    d.setHours(0, 0, 0, 0);
+    const diffDays = Math.ceil((d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDays < 0) return { category: "expired", diffDays };
+    if (diffDays <= 90) return { category: "expiring_soon", diffDays };
+    return { category: "valid", diffDays };
   }
 
-  if (transDate) {
-    transDate.setHours(0, 0, 0, 0);
-    const diffMs = transDate.getTime() - today.getTime();
-    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-    if (diffDays < 0) {
-      return {
-        isExpired: true,
-        status: "DL Expired",
-        category: "expired",
-        diffDays,
-        doe: transportDoeStr
-      };
-    } else if (diffDays <= 90) {
-      return {
-        isExpired: false,
-        status: "Expiring in 3 Months",
-        category: "expiring_soon",
-        diffDays,
-        doe: transportDoeStr
-      };
-    } else {
+  const mainEval = evalDate(mainDate);
+  const transEval = evalDate(transDate);
+
+  // Both Personal DOE and Transport DOE exist and are non-sentinel
+  if (mainEval && transEval) {
+    if (mainEval.category === "valid" && transEval.category === "valid") {
+      const useMain = mainEval.diffDays >= transEval.diffDays;
       return {
         isExpired: false,
         status: "Not Expired",
-        category: "valid",
-        diffDays,
-        doe: transportDoeStr
+        basis: useMain ? "Personal DOE" : "Transport DOE",
+        doe: useMain ? doeStr : transportDoeStr,
+        remarksNote: `Considered based on ${useMain ? 'Personal DOE: ' + doeStr : 'Transport DOE: ' + transportDoeStr}`
       };
     }
+    if (mainEval.category === "valid") {
+      return {
+        isExpired: false,
+        status: "Not Expired",
+        basis: "Personal DOE",
+        doe: doeStr,
+        remarksNote: `Considered based on Personal DOE: ${doeStr} (Note: Transport DOE ${transEval.category === 'expired' ? 'expired on ' + transportDoeStr : 'expires on ' + transportDoeStr})`
+      };
+    }
+    if (transEval.category === "valid") {
+      return {
+        isExpired: false,
+        status: "Not Expired",
+        basis: "Transport DOE",
+        doe: transportDoeStr,
+        remarksNote: `Considered based on Transport DOE: ${transportDoeStr} (Note: Personal DOE ${mainEval.category === 'expired' ? 'expired on ' + doeStr : 'expires on ' + doeStr})`
+      };
+    }
+    // Neither is valid, check if either is expiring within 3 months (90 days)
+    if (mainEval.category === "expiring_soon" || transEval.category === "expiring_soon") {
+      const useMain = mainEval.category === "expiring_soon" && (transEval.category !== "expiring_soon" || mainEval.diffDays >= transEval.diffDays);
+      return {
+        isExpired: false,
+        status: "Expiring in 3 Months",
+        basis: useMain ? "Personal DOE" : "Transport DOE",
+        doe: useMain ? doeStr : transportDoeStr,
+        remarksNote: `Expiring in 3 Months (Considered based on ${useMain ? 'Personal DOE: ' + doeStr : 'Transport DOE: ' + transportDoeStr})`
+      };
+    }
+    // Both are expired
+    return {
+      isExpired: true,
+      status: "DL Expired",
+      basis: "Both Expired",
+      doe: doeStr,
+      remarksNote: `DL Expired (Both Personal DOE: ${doeStr} and Transport DOE: ${transportDoeStr} are expired)`
+    };
+  }
+
+  // Only Personal DOE exists
+  if (mainEval) {
+    const isExp = mainEval.category === "expired";
+    const isSoon = mainEval.category === "expiring_soon";
+    return {
+      isExpired: isExp,
+      status: isExp ? "DL Expired" : (isSoon ? "Expiring in 3 Months" : "Not Expired"),
+      basis: "Personal DOE",
+      doe: doeStr,
+      remarksNote: `Considered based on Personal DOE: ${doeStr}`
+    };
+  }
+
+  // Only Transport DOE exists
+  if (transEval) {
+    const isExp = transEval.category === "expired";
+    const isSoon = transEval.category === "expiring_soon";
+    return {
+      isExpired: isExp,
+      status: isExp ? "DL Expired" : (isSoon ? "Expiring in 3 Months" : "Not Expired"),
+      basis: "Transport DOE",
+      doe: transportDoeStr,
+      remarksNote: `Considered based on Transport DOE: ${transportDoeStr}`
+    };
   }
 
   return {
     isExpired: false,
     status: "Not Expired",
-    category: "valid",
-    diffDays: 9999,
-    doe: doeStr || "-"
+    basis: "N/A",
+    doe: "-",
+    remarksNote: "No Expiry Date Specified"
   };
 }
 
@@ -471,10 +511,10 @@ function generateSurepassReportPdf(driver, cardDetails) {
     // Validity Card 1: Non-Transport
     doc.setFillColor(248, 250, 252);
     doc.roundedRect(55, 160, width - 110, 85, 4, 4, "FD");
-    const pDoi = driver.doi || c["Doi"] || c["Date of Issue"] || c["Issue Date"] || "01-01-2016";
-    const pDoe = driver.doe || c["Doe"] || c["Date of Expiry"] || c["Valid Till"] || "31-12-2035";
-    const pTransDoi = driver.transport_doi || c["Transport Doi"] || pDoi;
-    const pTransDoe = driver.transport_doe || c["Transport Doe"] || "31-12-2028";
+    const pDoi = driver.doi || c["Doi"] || c["Date of Issue"] || c["Issue Date"] || "-";
+    const pDoe = driver.doe || c["Doe"] || c["Date of Expiry"] || c["Valid Till"] || "-";
+    const pTransDoi = driver.transport_doi || c["Transport Doi"] || "-";
+    const pTransDoe = driver.transport_doe || c["Transport Doe"] || "-";
     const pExpiryEval = evaluateDlExpiry(pDoe, pTransDoe);
     const pExpiryStatus = driver.dl_expiry_status || pExpiryEval.status;
 
@@ -487,7 +527,8 @@ function generateSurepassReportPdf(driver, cardDetails) {
     doc.setTextColor(71, 85, 105);
     doc.text(`Effective Issue Date (DOI): ${pDoi}`, 68, 198);
     doc.text(`Valid Till (DOE): ${pDoe}`, 68, 214);
-    doc.text(`Current Operational Status: ${pExpiryStatus === 'DL Expired' ? 'EXPIRED (Past Valid Till)' : 'ACTIVE & VALID'}`, 68, 230);
+    const personalExpired = (pDoe !== "-" && evaluateDlExpiry(pDoe, "").status === "DL Expired");
+    doc.text(`Current Operational Status: ${personalExpired ? 'EXPIRED (Past Valid Till)' : 'ACTIVE & VALID'}`, 68, 230);
     doc.text("Endorsement Authority: Regional Transport Office", 305, 198);
     doc.text("Renewal Type: Periodic Sarathi Extension", 305, 214);
 
@@ -503,7 +544,12 @@ function generateSurepassReportPdf(driver, cardDetails) {
     doc.setTextColor(71, 85, 105);
     doc.text(`Effective Issue Date: ${pTransDoi}`, 68, 298);
     doc.text(`Valid Till (Transport DOE): ${pTransDoe}`, 68, 314);
-    doc.text(`Commercial Operational Status: ${pExpiryStatus === 'DL Expired' ? 'EXPIRED' : 'VALID / COMPLIANT'}`, 68, 330);
+    let transStatusText = "NOT ENDORSED / N/A";
+    if (pTransDoe && pTransDoe !== "-") {
+      const transExpired = (evaluateDlExpiry("", pTransDoe).status === "DL Expired");
+      transStatusText = transExpired ? "EXPIRED" : "VALID / COMPLIANT";
+    }
+    doc.text(`Commercial Operational Status: ${transStatusText}`, 68, 330);
     doc.text("Hazardous Goods Endorsement: Not Applicable", 305, 298);
     doc.text("Hill Terrain Driving Endorsement: Standard Authorized", 305, 314);
 
@@ -770,11 +816,12 @@ function renderRecordsTable() {
     else if (r.verification_status === "Server Error") { color = "#DC2626"; bg = "#FEF2F2"; }
     else if (r.verification_status === "Not Found on Verixa" || r.verification_status === "Invalid Details" || r.verification_status === "Verification Error") { color = "#BE123C"; bg = "#FFF1F2"; }
 
+    const expBasis = r.expiry_basis ? ` | Considered on: ${escapeHtml(r.expiry_basis)}` : "";
     const expBadge = r.dl_expiry_status === "DL Expired"
-      ? `<span style="background:#FEE2E2; color:#B91C1C; font-size:8px; font-weight:700; padding:1px 4px; border-radius:3px; margin-left:3px;" title="DOE: ${escapeHtml(r.doe || '-')}">Expired</span>`
+      ? `<span style="background:#FEE2E2; color:#B91C1C; font-size:8px; font-weight:700; padding:1px 4px; border-radius:3px; margin-left:3px;" title="DOE: ${escapeHtml(r.doe || '-')} | Trans DOE: ${escapeHtml(r.transport_doe || '-')}${expBasis}">Expired</span>`
       : (r.dl_expiry_status === "Expiring in 3 Months"
-        ? `<span style="background:#FFEDD5; color:#C2410C; font-size:8px; font-weight:700; padding:1px 4px; border-radius:3px; margin-left:3px;" title="DOE: ${escapeHtml(r.doe || '-')}">Expiring Soon</span>`
-        : (r.dl_expiry_status === "Not Expired" ? `<span style="background:#DCFCE7; color:#15803D; font-size:8px; font-weight:700; padding:1px 4px; border-radius:3px; margin-left:3px;" title="DOE: ${escapeHtml(r.doe || '-')}">Valid</span>` : ""));
+        ? `<span style="background:#FFEDD5; color:#C2410C; font-size:8px; font-weight:700; padding:1px 4px; border-radius:3px; margin-left:3px;" title="DOE: ${escapeHtml(r.doe || '-')} | Trans DOE: ${escapeHtml(r.transport_doe || '-')}${expBasis}">Expiring Soon</span>`
+        : (r.dl_expiry_status === "Not Expired" ? `<span style="background:#DCFCE7; color:#15803D; font-size:8px; font-weight:700; padding:1px 4px; border-radius:3px; margin-left:3px;" title="DOE: ${escapeHtml(r.doe || '-')} | Trans DOE: ${escapeHtml(r.transport_doe || '-')}${expBasis}">Valid</span>` : ""));
 
     return `
       <tr>
@@ -1059,18 +1106,19 @@ async function exportUpdatedExcel() {
 
     const doiVal = extractDateFromText(rawDoi) || "-";
     const doeVal = extractDateFromText(rawDoe) || "-";
-    const transDoeVal = extractDateFromText(rawTransDoe);
+    const transDoeVal = extractDateFromText(rawTransDoe) || "-";
 
+    const expiryEval = evaluateDlExpiry(doeVal, transDoeVal);
     let expiryStatus = r.dl_expiry_status || "";
-    if ((!expiryStatus || expiryStatus === "Not Expired") && isVerified && doeVal !== "-") {
-      expiryStatus = evaluateDlExpiry(doeVal, transDoeVal).status;
+    if (!expiryStatus || expiryStatus === "Not Expired" || isVerified) {
+      expiryStatus = expiryEval.status;
     }
 
     let vRemarks = r.remarks || (isVerified ? "Verified on Surepass" : (isServerError ? "Server Error" : (isFailed ? "Not Verified" : "Pending")));
-    if (isVerified && expiryStatus === "DL Expired" && !vRemarks.toLowerCase().includes("dl expired")) {
-      vRemarks += ` (DL Expired - DOE: ${doeVal})`;
-    } else if (isVerified && expiryStatus === "Expiring in 3 Months" && !vRemarks.toLowerCase().includes("expiring")) {
-      vRemarks += ` (Expiring in 3 Months - DOE: ${doeVal})`;
+    if (isVerified && expiryEval.remarksNote) {
+      if (!vRemarks.includes("Considered based on") && !vRemarks.includes("DL Expired (Both")) {
+        vRemarks = `${vRemarks} (${expiryEval.remarksNote})`;
+      }
     }
 
     const row = {};
@@ -1085,10 +1133,9 @@ async function exportUpdatedExcel() {
     row["Date of Birth (DOB)"] = r.dob || r.card_details?.["DOB"] || r.original_data?.["DOB"] || "-";
     row["Date of Issue (DOI)"] = doiVal || "-";
     row["Date of Expiry (DOE)"] = doeVal || "-";
-    if (transDoeVal) {
-      row["Transport DOE"] = transDoeVal;
-    }
+    row["Transport DOE"] = transDoeVal || "-";
     row["DL Expiry Status"] = isVerified ? (expiryStatus || "Not Expired") : (isServerError ? "Server Error" : (isFailed ? "Not Verified" : "Pending"));
+    row["Expiry Considered On"] = isVerified ? (expiryEval.basis || "Personal DOE") : "-";
     row["Verification Status"] = isVerified ? (r.verification_status === "Verified & Uploaded" || r.upload_status === "Uploaded" ? "Verified & Uploaded" : "Verified") : (isServerError ? "Server Error" : (isFailed ? "Not Verified" : "Pending"));
     row["Verixa Upload Status"] = isVerified ? (r.upload_status === "Uploaded" || r.verification_status === "Verified & Uploaded" ? "Uploaded to Verixa" : "Pending Upload") : (isServerError ? "Skipped (Server Error)" : (isFailed ? "Skipped (Not Verified)" : "Pending"));
     row["Verification Date"] = r.verification_date || "-";
@@ -1239,6 +1286,7 @@ async function exportUpdatedExcel() {
 
       const expColLetter = getColLetter(colKeys.indexOf("DL Expiry Status"));
       const doeColLetter = getColLetter(colKeys.indexOf("Date of Expiry (DOE)"));
+      const transDoeColLetter = getColLetter(colKeys.indexOf("Transport DOE"));
 
       let sheetXml = await zip.file('xl/worksheets/sheet1.xml').async('string');
 
@@ -1261,7 +1309,7 @@ async function exportUpdatedExcel() {
           let cleanAttrs = otherAttrs.replace(/\s*s="[^"]*"/g, '');
           let styleId = 6; // Standard valid cell
 
-          const isBadgeCol = (colLetter === expColLetter || colLetter === doeColLetter);
+          const isBadgeCol = (colLetter === expColLetter || colLetter === doeColLetter || colLetter === transDoeColLetter);
 
           if (isExpired) {
             styleId = isBadgeCol ? 2 : 3;
@@ -1337,13 +1385,16 @@ async function copyGSheetResults() {
     return alert("No records to copy.");
   }
 
-  const lines = ["S.No\tGSM ID\tCandidate Name\tMobile Number\tDL Number\tDOB\tDOI\tDOE\tDL Expiry Status\tVerification Status\tVerixa Upload\tVerification Date\tRemarks"];
+  const lines = ["S.No\tGSM ID\tCandidate Name\tMobile Number\tDL Number\tDOB\tDOI\tDOE\tTransport DOE\tDL Expiry Status\tExpiry Considered On\tVerification Status\tVerixa Upload\tVerification Date\tRemarks"];
   currentLocalBatch.records.forEach((r, idx) => {
     const isVerified = (r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded");
     const isServerError = (r.verification_status === "Server Error" || /server\s*error/i.test(r.remarks || ""));
     const doiVal = r.doi || r.card_details?.["Doi"] || r.card_details?.["Date of Issue"] || r.card_details?.["Issue Date"] || "-";
     const doeVal = r.doe || r.card_details?.["Doe"] || r.card_details?.["Date of Expiry"] || r.card_details?.["Valid Till"] || "-";
-    const expVal = r.dl_expiry_status || (isVerified ? evaluateDlExpiry(doeVal, r.transport_doe).status : (isServerError ? "Server Error" : "Not Verified"));
+    const transDoeVal = r.transport_doe || r.card_details?.["Transport Doe"] || "-";
+    const expiryEval = evaluateDlExpiry(doeVal, transDoeVal);
+    const expVal = r.dl_expiry_status || (isVerified ? expiryEval.status : (isServerError ? "Server Error" : "Not Verified"));
+    const basisVal = isVerified ? (r.expiry_basis || expiryEval.basis) : "-";
     const nameVal = r.driver_name || r.card_details?.["Name"] || "-";
     const phoneVal = r.phone_number || "-";
     const dlVal = r.dl_number || r.card_details?.["License Number"] || "-";
@@ -1351,7 +1402,7 @@ async function copyGSheetResults() {
     const vStatus = isVerified ? (r.upload_status === "Uploaded" || r.verification_status === "Verified & Uploaded" ? "Verified & Uploaded" : "Verified") : (isServerError ? "Server Error" : "Not Verified");
     const uploadStatus = isVerified ? (r.upload_status === "Uploaded" || r.verification_status === "Verified & Uploaded" ? "Uploaded to Verixa" : "Pending") : "Skipped";
 
-    lines.push(`${r.row_index || (idx + 1)}\t${r.gsm_id || ""}\t${nameVal}\t${phoneVal}\t${dlVal}\t${dobVal}\t${doiVal}\t${doeVal}\t${expVal}\t${vStatus}\t${uploadStatus}\t${r.verification_date || ""}\t${r.remarks || ""}`);
+    lines.push(`${r.row_index || (idx + 1)}\t${r.gsm_id || ""}\t${nameVal}\t${phoneVal}\t${dlVal}\t${dobVal}\t${doiVal}\t${doeVal}\t${transDoeVal}\t${expVal}\t${basisVal}\t${vStatus}\t${uploadStatus}\t${r.verification_date || ""}\t${r.remarks || ""}`);
   });
 
   try {
@@ -1396,7 +1447,7 @@ async function downloadAllReportsZip() {
     const reportFolder = zip.folder(folderName);
 
     // Add a consolidated Verification_Summary.csv inside the ZIP
-    let csvContent = "Row,GSM ID,Candidate Name,Mobile Number,DL Number,DOB,DOI,DOE,DL Expiry Status,Verification Status,Verification Date,Remarks,Report Filename\n";
+    let csvContent = "Row,GSM ID,Candidate Name,Mobile Number,DL Number,DOB,DOI,DOE,Transport DOE,DL Expiry Status,Expiry Considered On,Verification Status,Verification Date,Remarks,Report Filename\n";
 
     let idx = 0;
     for (const r of verifiedRecords) {
@@ -1418,9 +1469,12 @@ async function downloadAllReportsZip() {
 
       const doiVal = r.doi || r.card_details?.["Doi"] || "-";
       const doeVal = r.doe || r.card_details?.["Doe"] || "-";
-      const expVal = r.dl_expiry_status || evaluateDlExpiry(doeVal, r.transport_doe).status;
+      const transDoeVal = r.transport_doe || r.card_details?.["Transport Doe"] || "-";
+      const expiryEval = evaluateDlExpiry(doeVal, transDoeVal);
+      const expVal = r.dl_expiry_status || expiryEval.status;
+      const basisVal = r.expiry_basis || expiryEval.basis;
 
-      csvContent += `"${r.row_index}","${r.gsm_id || ''}","${(r.driver_name || r.card_details?.['Name'] || '').replace(/"/g, '""')}","${r.phone_number || ''}","${r.dl_number || ''}","${r.dob || ''}","${doiVal}","${doeVal}","${expVal}","${r.verification_status || ''}","${r.verification_date || ''}","${(r.remarks || '').replace(/"/g, '""')}","${filename}"\n`;
+      csvContent += `"${r.row_index}","${r.gsm_id || ''}","${(r.driver_name || r.card_details?.['Name'] || '').replace(/"/g, '""')}","${r.phone_number || ''}","${r.dl_number || ''}","${r.dob || ''}","${doiVal}","${doeVal}","${transDoeVal}","${expVal}","${basisVal}","${r.verification_status || ''}","${r.verification_date || ''}","${(r.remarks || '').replace(/"/g, '""')}","${filename}"\n`;
 
       await sleep(25);
     }
@@ -1816,11 +1870,16 @@ async function runAutomationLoop() {
     if (driver.transport_doe) driver.card_details["Transport Doe"] = driver.transport_doe;
     if (driver.transport_doi) driver.card_details["Transport Doi"] = driver.transport_doi;
 
-    driver.dl_expiry_status = result.dl_expiry_status || evaluateDlExpiry(driver.doe, driver.transport_doe).status;
+    const expiryEval = evaluateDlExpiry(driver.doe, driver.transport_doe);
+    driver.dl_expiry_status = expiryEval.status;
+    driver.expiry_basis = expiryEval.basis;
     driver.is_dl_expired = (driver.dl_expiry_status === "DL Expired");
+    if (expiryEval.remarksNote) {
+      driver.remarks = `${finalRemarks} (${expiryEval.remarksNote})`;
+    }
 
-    log(`📅 [Surepass] Captured DOI: ${driver.doi || '-'} | DOE: ${driver.doe || '-'} ➔ Status: ${driver.dl_expiry_status}`, driver.is_dl_expired ? "warn" : "info");
-    log(`✓ Outcome: Verified (${finalRemarks})`, "info");
+    log(`📅 [Surepass] Captured DOI: ${driver.doi || '-'} | DOE: ${driver.doe || '-'} | Trans DOE: ${driver.transport_doe || '-'} ➔ Status: ${driver.dl_expiry_status} (Basis: ${driver.expiry_basis})`, driver.is_dl_expired ? "warn" : "info");
+    log(`✓ Outcome: Verified (${driver.remarks})`, "info");
 
     // Official Surepass 4-Page Report Generation & Automatic Download
     // Surepass's manual Download button triggers window.print for 4 pages (Image 2).
