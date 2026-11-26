@@ -1076,7 +1076,10 @@ async function exportUpdatedExcel() {
     const row = {};
     row["S.No"] = r.row_index || (idx + 1);
     row["GSM ID"] = r.gsm_id || "";
-    row["Candidate Name"] = r.driver_name || r.card_details?.["Name"] || r.original_data?.["Driver Name"] || r.original_data?.["Candidate Name"] || r.original_data?.["Name"] || "-";
+    const candidateName = (r.card_details?.["Name"] && r.card_details["Name"] !== "Verified Candidate" && r.card_details["Name"].toLowerCase() !== "on aadhaar")
+      ? r.card_details["Name"]
+      : (r.driver_name && r.driver_name.toLowerCase() !== "on aadhaar" ? r.driver_name : (r.original_data?.["Driver Name"] || r.original_data?.["Candidate Name"] || r.original_data?.["Name"] || r.driver_name || "-"));
+    row["Candidate Name"] = candidateName;
     row["Mobile Number"] = r.phone_number || r.original_data?.["Mobile Number"] || r.original_data?.["Phone Number"] || "-";
     row["DL Number"] = r.dl_number || r.card_details?.["License Number"] || r.original_data?.["DL Number"] || "-";
     row["Date of Birth (DOB)"] = r.dob || r.card_details?.["DOB"] || r.original_data?.["DOB"] || "-";
@@ -1767,7 +1770,9 @@ async function runAutomationLoop() {
     if (!result.card_details["License Number"]) {
       result.card_details["License Number"] = driver.dl_number;
     }
-    if (!result.card_details["Name"]) {
+    if (result.card_details["Name"] && result.card_details["Name"] !== "Verified Candidate" && result.card_details["Name"].toLowerCase() !== "on aadhaar") {
+      driver.driver_name = result.card_details["Name"];
+    } else if (!result.card_details["Name"]) {
       result.card_details["Name"] = driver.driver_name || "Verified Candidate";
     }
 

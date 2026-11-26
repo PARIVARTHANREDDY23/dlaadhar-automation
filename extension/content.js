@@ -29,6 +29,56 @@ try {
   };
 } catch (e) { }
 
+// Network Interceptor: Captures verified JSON response directly from Surepass backend API
+let latestInterceptedApiData = null;
+window.addEventListener("SUREPASS_DATA_RECEIVED", (e) => {
+  if (e.detail) {
+    latestInterceptedApiData = e.detail;
+    console.log("[Surepass Assistant] ⚡ Intercepted Surepass API Verification Data:", latestInterceptedApiData);
+  }
+});
+
+try {
+  const injectScript = document.createElement("script");
+  injectScript.textContent = `
+    (function() {
+      const origFetch = window.fetch;
+      window.fetch = async function(...args) {
+        const res = await origFetch.apply(this, args);
+        try {
+          const clone = res.clone();
+          clone.json().then(json => {
+            if (json && json.data && (json.data.license_number || json.data.client_id || json.data.doe || json.data.doi || json.data.name)) {
+              window.dispatchEvent(new CustomEvent("SUREPASS_DATA_RECEIVED", { detail: json.data }));
+            }
+          }).catch(() => {});
+        } catch (e) {}
+        return res;
+      };
+
+      const origSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.send = function() {
+        this.addEventListener("load", function() {
+          try {
+            const txt = this.responseText;
+            if (txt && (txt.includes("license_number") || txt.includes('"doe"') || txt.includes('"doi"'))) {
+              const json = JSON.parse(txt);
+              if (json && json.data) {
+                window.dispatchEvent(new CustomEvent("SUREPASS_DATA_RECEIVED", { detail: json.data }));
+              }
+            }
+          } catch (e) {}
+        });
+        return origSend.apply(this, arguments);
+      };
+    })();
+  `;
+  (document.head || document.documentElement).appendChild(injectScript);
+  injectScript.remove();
+} catch (e) {
+  console.warn("[Surepass Assistant] Interceptor injection error:", e);
+}
+
 function blobToBase64(blob) {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -87,39 +137,88 @@ function extractDateFromText(text) {
 function extractSurepassCardDetails() {
   const details = {};
 
-  const responseBlock = Array.from(document.querySelectorAll("div, section, main")).find(d =>
-    (d.innerText || "").includes("Response") && (d.innerText || "").includes("License Number")
-  ) || document.body;
+  // 1. Layer 1: Authoritative API Cache Data (Direct from Surepass Backend Interceptor)
+  if (latestInterceptedApiData) {
+    const api = latestInterceptedApiData;
+    if (api.client_id) details["Client ID"] = String(api.client_id).trim();
+    if (api.license_number) details["License Number"] = String(api.license_number).trim();
+    if (api.name) details["Name"] = String(api.name).trim();
+    if (api.state) details["State"] = String(api.state).trim();
+    if (api.dob) details["DOB"] = String(api.dob).trim();
+    if (api.doi) details["Doi"] = String(api.doi).trim();
+    if (api.doe) details["Doe"] = String(api.doe).trim();
+    if (api.transport_doi) details["Transport Doi"] = String(api.transport_doi).trim();
+    if (api.transport_doe) details["Transport Doe"] = String(api.transport_doe).trim();
+    if (api.issue_date && !details["Doi"]) details["Doi"] = String(api.issue_date).trim();
+    if (api.expiry_date && !details["Doe"]) details["Doe"] = String(api.expiry_date).trim();
+    if (api.validity && !details["Doe"]) details["Doe"] = String(api.validity).trim();
+    if (api.permanent_address) details["Permanent Address"] = String(api.permanent_address).trim();
+    if (api.temporary_address) details["Temporary Address"] = String(api.temporary_address).trim();
+    if (api.father_name || api.father_or_husband_name) details["Father Name"] = String(api.father_name || api.father_or_husband_name).trim();
+    if (api.blood_group) details["Blood Group"] = String(api.blood_group).trim();
+    if (api.gender) details["Gender"] = String(api.gender).trim();
+  }
 
-  const blockText = responseBlock ? responseBlock.innerText : document.body.innerText;
+  const blockText = document.body ? document.body.innerText : "";
 
-  // 1. Direct Regex Extraction for Dates with Negative Lookahead (Prevents label collision!)
-  const reTransDoe = /(?:^|\b)Transport\s*Doe\s*[:\n\r\t]+\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/i;
-  const reTransDoi = /(?:^|\b)Transport\s*Doi\s*[:\n\r\t]+\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/i;
-  const reDoe = /(?<!Transport\s)(?<!Transport)\b(?:Doe|Date\s*of\s*Expiry|Valid\s*Till)\s*[:\n\r\t]+\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/i;
-  const reDoi = /(?<!Transport\s)(?<!Transport)\b(?:Doi|Date\s*of\s*Issue|Issue\s*Date)\s*[:\n\r\t]+\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{4})/i;
-  const reDob = /(?:^|\b)(?:DOB|Date\s*of\s*Birth)\s*[:\n\r\t]+\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/i;
+  // 2. Layer 2: Full Document Regex Matching for Dates (Handles any newlines, copy icons, colons, spaces)
+  if (!details["Transport Doe"]) {
+    const m = blockText.match(/\btransport\s*doe\b[\s\S]{1,50}?(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/i);
+    if (m) details["Transport Doe"] = m[1].trim();
+  }
 
-  const mTransDoe = blockText.match(reTransDoe);
-  if (mTransDoe) details["Transport Doe"] = mTransDoe[1].trim();
+  if (!details["Transport Doi"]) {
+    const m = blockText.match(/\btransport\s*doi\b[\s\S]{1,50}?(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/i);
+    if (m) details["Transport Doi"] = m[1].trim();
+  }
 
-  const mTransDoi = blockText.match(reTransDoi);
-  if (mTransDoi) details["Transport Doi"] = mTransDoi[1].trim();
+  // DOE (Non-transport): Must NOT be preceded by "transport"
+  if (!details["Doe"]) {
+    const m = blockText.match(/(?<!transport[\s_-]*)\b(?:doe|date\s*of\s*expiry|valid\s*till|expiry\s*date)\b[\s\S]{1,50}?(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/i);
+    if (m) details["Doe"] = m[1].trim();
+  }
 
-  const mDoe = blockText.match(reDoe);
-  if (mDoe) details["Doe"] = mDoe[1].trim();
+  // DOI (Non-transport): Must NOT be preceded by "transport"
+  if (!details["Doi"]) {
+    const m = blockText.match(/(?<!transport[\s_-]*)\b(?:doi|date\s*of\s*issue|issue\s*date)\b[\s\S]{1,50}?(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/i);
+    if (m) details["Doi"] = m[1].trim();
+  }
 
-  const mDoi = blockText.match(reDoi);
-  if (mDoi) details["Doi"] = mDoi[1].trim();
+  // DOB
+  if (!details["DOB"]) {
+    const m = blockText.match(/\b(?:dob|date\s*of\s*birth)\b[\s\S]{1,50}?(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/i);
+    if (m) details["DOB"] = m[1].trim();
+  }
 
-  const mDob = blockText.match(reDob);
-  if (mDob) details["DOB"] = mDob[1].trim();
+  // 3. Layer 3: Line-based Extraction for Name and Key Fields
+  const textLines = blockText.split("\n").map(s => s.trim()).filter(Boolean);
+  if (!details["Name"]) {
+    const nIdx = textLines.findIndex(l => /^name\b/i.test(l) && !/father|husband/i.test(l));
+    if (nIdx !== -1) {
+      for (let i = nIdx + 1; i < Math.min(nIdx + 4, textLines.length); i++) {
+        const line = textLines[i];
+        if (/copy/i.test(line)) continue;
+        if (line.length > 2 && !/address|zip|license|dob|doe|doi|citizenship|state|gender|client/i.test(line)) {
+          details["Name"] = line;
+          break;
+        }
+      }
+    }
+  }
 
-  // 2. DOM-based card extraction with exact card container isolation
-  const allCardBoxes = Array.from(document.querySelectorAll("div, section, article, td")).filter(c => {
-    if (!c || c.children.length > 6) return false;
+  if (!details["License Number"]) {
+    const lIdx = textLines.findIndex(l => /license\s*number/i.test(l));
+    if (lIdx !== -1 && textLines[lIdx + 1]) {
+      const cand = textLines[lIdx + 1].replace(/\bcopy\b/gi, "").trim();
+      if (cand.length > 5) details["License Number"] = cand;
+    }
+  }
+
+  // 4. Layer 4: Deep Card Tile & Sibling Elements Traversal
+  const allCardBoxes = Array.from(document.querySelectorAll("div, section, article, td, li")).filter(c => {
+    if (!c || c.children.length > 8) return false;
     const txt = (c.innerText || "").trim();
-    return txt.length > 2 && txt.length < 250;
+    return txt.length > 2 && txt.length < 350;
   });
 
   const knownFieldLabels = new Set([
@@ -128,9 +227,41 @@ function extractSurepassCardDetails() {
     "father/husband name", "father or husband name", "dob", "date of birth", "gender",
     "blood group", "badge number", "class of vehicle", "cov", "doi", "doe",
     "transport doi", "transport doe", "date of issue", "date of expiry", "issue date",
-    "valid till", "non transport", "transport", "ola name", "ola code", "has image"
+    "valid till", "non transport", "transport", "ola name", "ola code", "has image", "copy"
   ]);
 
+  allCardBoxes.forEach(box => {
+    const bTxt = (box.innerText || "").trim();
+    const bLower = bTxt.toLowerCase();
+
+    // Check for Transport DOE
+    if (!details["Transport Doe"] && bLower.includes("transport doe")) {
+      const d = extractDateFromText(bTxt);
+      if (d) details["Transport Doe"] = d;
+    }
+    // Check for Transport DOI
+    if (!details["Transport Doi"] && bLower.includes("transport doi")) {
+      const d = extractDateFromText(bTxt);
+      if (d) details["Transport Doi"] = d;
+    }
+    // Check for DOE (Non-transport)
+    if (!details["Doe"] && (bLower.startsWith("doe\n") || bLower.startsWith("doe:") || bLower === "doe" || bLower.includes("date of expiry") || bLower.includes("valid till")) && !bLower.includes("transport")) {
+      const d = extractDateFromText(bTxt);
+      if (d) details["Doe"] = d;
+    }
+    // Check for DOI (Non-transport)
+    if (!details["Doi"] && (bLower.startsWith("doi\n") || bLower.startsWith("doi:") || bLower === "doi" || bLower.includes("date of issue") || bLower.includes("issue date")) && !bLower.includes("transport")) {
+      const d = extractDateFromText(bTxt);
+      if (d) details["Doi"] = d;
+    }
+    // Check for DOB
+    if (!details["DOB"] && (bLower.includes("dob") || bLower.includes("date of birth"))) {
+      const d = extractDateFromText(bTxt);
+      if (d) details["DOB"] = d;
+    }
+  });
+
+  // 5. Layer 5: Key-Value Traversal for any remaining fields
   const fields = [
     "Client ID", "License Number", "State", "Name",
     "Permanent Address", "Permanent Zip", "Temporary Address",
@@ -159,25 +290,10 @@ function extractSurepassCardDetails() {
         const lines = box.innerText.split("\n").map(s => s.trim()).filter(Boolean);
         const lIdx = lines.findIndex(l => l.toLowerCase() === fLower || l.toLowerCase().startsWith(fLower + ":"));
         if (lIdx !== -1 && lines[lIdx + 1]) {
-          const candVal = lines[lIdx + 1];
-          // Value must NOT be another field label
+          const candVal = lines[lIdx + 1].replace(/\bcopy\b/gi, "").trim();
           if (!knownFieldLabels.has(candVal.toLowerCase())) {
             details[f] = candVal;
           }
-        }
-      }
-    }
-  });
-
-  // Fallback for non-date fields from block text
-  fields.forEach(f => {
-    if (!details[f] && !/doi|doe|date|valid/i.test(f)) {
-      const re = new RegExp("(?:^|\\n)\\s*" + f.replace(/[/]/g, "[/]") + "\\s*[:\\n\\t]+\\s*([^\\n\\r]+)", "im");
-      const m = blockText.match(re);
-      if (m && m[1]) {
-        const candVal = m[1].trim();
-        if (!knownFieldLabels.has(candVal.toLowerCase())) {
-          details[f] = candVal;
         }
       }
     }
@@ -683,27 +799,44 @@ async function verifyDriverOnPage(driver) {
   let expiryResult = { isExpired: false, status: "Not Expired", doe: "-" };
 
   if (finalStatus === "Verified") {
-    console.log("[Surepass Assistant] Verified! Extracting Response card details and capturing DOI & DOE...");
-    await sleep(1200);
+    console.log("[Surepass Assistant] Verified! Actively polling for Response cards, DOI & DOE...");
 
-    // Extract all structured fields from the verified card (Image 1, 2, 3)
-    cardDetails = extractSurepassCardDetails() || {};
+    // Smooth scroll down to trigger rendering of response cards if virtualized
+    try {
+      window.scrollTo({ top: document.body.scrollHeight / 3, behavior: "smooth" });
+    } catch (e) { }
+
+    const waitStart = Date.now();
+    while (Date.now() - waitStart < 15000) {
+      cardDetails = extractSurepassCardDetails() || {};
+
+      doi = extractDateFromText(cardDetails["Doi"]) || 
+            extractDateFromText(cardDetails["Date of Issue"]) || 
+            extractDateFromText(cardDetails["Issue Date"]) || 
+            extractDateFromText(cardDetails["Transport Doi"]) || "";
+
+      doe = extractDateFromText(cardDetails["Doe"]) || 
+            extractDateFromText(cardDetails["Date of Expiry"]) || 
+            extractDateFromText(cardDetails["Valid Till"]) || "";
+
+      transportDoe = extractDateFromText(cardDetails["Transport Doe"]) || "";
+      transportDoi = extractDateFromText(cardDetails["Transport Doi"]) || "";
+
+      const hasCandidateName = cardDetails["Name"] && cardDetails["Name"] !== "Verified Candidate" && cardDetails["Name"].toLowerCase() !== "on aadhaar";
+      const hasAnyDate = Boolean(doe || doi || transportDoe || cardDetails["DOB"]);
+      const hasLic = Boolean(cardDetails["License Number"] || cardDetails["Client ID"]);
+
+      if ((hasAnyDate || hasCandidateName) && hasLic) {
+        console.log(`[Surepass Assistant] Response card successfully loaded and verified in ${Date.now() - waitStart}ms!`);
+        break;
+      }
+
+      await sleep(350);
+    }
+
     if (!cardDetails["License Number"]) cardDetails["License Number"] = driver.dl_number;
     if (!cardDetails["Name"]) cardDetails["Name"] = driver.driver_name || "Verified Candidate";
-    console.log("[Surepass Assistant] Extracted Card Details:", cardDetails);
-
-    // Step: Capture DOI (Date of Issue) and DOE (Date of Expiry) before downloading with strict date validation
-    doi = extractDateFromText(cardDetails["Doi"]) || 
-          extractDateFromText(cardDetails["Date of Issue"]) || 
-          extractDateFromText(cardDetails["Issue Date"]) || 
-          extractDateFromText(cardDetails["Transport Doi"]) || "";
-
-    doe = extractDateFromText(cardDetails["Doe"]) || 
-          extractDateFromText(cardDetails["Date of Expiry"]) || 
-          extractDateFromText(cardDetails["Valid Till"]) || "";
-
-    transportDoe = extractDateFromText(cardDetails["Transport Doe"]) || "";
-    transportDoi = extractDateFromText(cardDetails["Transport Doi"]) || "";
+    console.log("[Surepass Assistant] Final Extracted Card Details:", cardDetails);
 
     // Sync clean validated date values back into cardDetails
     if (doi) cardDetails["Doi"] = doi;
