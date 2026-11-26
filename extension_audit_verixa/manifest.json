@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Verixa Document Auditor (Aadhaar & DL Check)",
+  "version": "1.0.0",
+  "description": "Fast standalone auditor to scan Verixa360 candidates and detect if DL reports were uploaded into Aadhaar or other document sections.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs",
+    "downloads"
+  ],
+  "host_permissions": [
+    "*://*.verixa360.com/*",
+    "*://verixa360.com/*",
+    "*://*.verixa360.in/*",
+    "*://verixa360.in/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Verixa Document Auditor",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.verixa360.com/*",
+        "*://verixa360.com/*",
+        "*://*.verixa360.in/*",
+        "*://verixa360.in/*"
+      ],
+      "js": ["verixa_audit_content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}

@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Verixa Document Auditor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 580px;
+      min-height: 540px;
+      max-height: 600px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #F8FAFC;
+      color: #0F172A;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+    header {
+      background: #1E3A8A;
+      color: #FFFFFF;
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    header h1 { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+    .status-pill {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 600;
+      background: rgba(255,255,255,0.2);
+    }
+    .status-ok { background: #10B981; color: #fff; }
+    .status-warn { background: #F59E0B; color: #fff; }
+
+    .main-body { padding: 12px 16px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
+
+    .card {
+      background: #FFFFFF;
+      border: 1px solid #E2E8F0;
+      border-radius: 6px;
+      padding: 10px 12px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .card-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: #334155;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    textarea {
+      width: 100%;
+      height: 90px;
+      padding: 8px;
+      font-size: 11px;
+      font-family: monospace;
+      border: 1px solid #CBD5E1;
+      border-radius: 4px;
+      resize: vertical;
+      outline: none;
+    }
+    textarea:focus { border-color: #2563EB; }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+    }
+    .stat-box {
+      background: #F1F5F9;
+      padding: 6px 8px;
+      border-radius: 4px;
+      text-align: center;
+      border: 1px solid #E2E8F0;
+    }
+    .stat-num { font-size: 16px; font-weight: 800; }
+    .stat-lbl { font-size: 9px; color: #64748B; font-weight: 600; text-transform: uppercase; }
+
+    .btn-row { display: flex; gap: 8px; align-items: center; }
+    button {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 11px;
+      padding: 6px 12px;
+      border-radius: 4px;
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      transition: background 0.15s;
+    }
+    .btn-primary { background: #2563EB; color: #FFFFFF; }
+    .btn-primary:hover { background: #1D4ED8; }
+    .btn-danger { background: #DC2626; color: #FFFFFF; }
+    .btn-danger:hover { background: #B91C1C; }
+    .btn-secondary { background: #E2E8F0; color: #334155; }
+    .btn-secondary:hover { background: #CBD5E1; }
+    .btn-success { background: #059669; color: #FFFFFF; }
+    .btn-success:hover { background: #047857; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .progress-bar-wrap {
+      width: 100%;
+      height: 6px;
+      background: #E2E8F0;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: #2563EB;
+      transition: width 0.2s;
+    }
+
+    .table-wrap {
+      max-height: 180px;
+      overflow-y: auto;
+      border: 1px solid #E2E8F0;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10px;
+    }
+    th {
+      background: #F8FAFC;
+      color: #475569;
+      font-weight: 700;
+      padding: 6px 8px;
+      text-align: left;
+      border-bottom: 1px solid #E2E8F0;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    td {
+      padding: 5px 8px;
+      border-bottom: 1px solid #F1F5F9;
+      color: #1E293B;
+    }
+    tr:hover { background: #F8FAFC; }
+
+    .badge-issue { background: #FEE2E2; color: #DC2626; font-weight: 700; padding: 2px 5px; border-radius: 3px; }
+    .badge-clean { background: #DCFCE7; color: #16A34A; font-weight: 700; padding: 2px 5px; border-radius: 3px; }
+    .badge-empty { background: #F1F5F9; color: #64748B; font-weight: 600; padding: 2px 5px; border-radius: 3px; }
+
+    .log-box {
+      font-family: monospace;
+      font-size: 9.5px;
+      color: #334155;
+      background: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-radius: 4px;
+      padding: 4px 8px;
+      height: 22px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🔍 Verixa Document Auditor</h1>
+    <div id="verixaStatusPill" class="status-pill status-warn">Verixa Tab: Checking...</div>
+  </header>
+
+  <div class="main-body">
+    <!-- STEP 1: INPUT GSM IDS -->
+    <div class="card">
+      <div class="card-title">
+        <span>1. Paste Candidate GSM IDs (Up to 1000)</span>
+        <span id="lblGsmCount" style="color:#2563EB; font-weight:700;">0 GSMs Loaded</span>
+      </div>
+      <textarea id="txtGsmInput" placeholder="Paste your GSM IDs here (one per line or comma separated)&#10;e.g.&#10;GSM-FLS-10019&#10;GSM-FLS-10020&#10;GSM-FLS-10021"></textarea>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px;">
+        <div style="display:flex; gap:6px; align-items:center;">
+          <input type="file" id="fileExcelUpload" accept=".xlsx,.xls,.csv" style="display:none;">
+          <button type="button" id="btnUploadFile" class="btn-secondary" style="font-size:10px; padding:3px 8px;">📂 Load from Excel/CSV</button>
+          <button type="button" id="btnClearQueue" class="btn-secondary" style="font-size:10px; padding:3px 8px;">Clear</button>
+        </div>
+        <button type="button" id="btnParseQueue" class="btn-primary" style="font-size:10px; padding:3px 10px;">✓ Load GSM Queue</button>
+      </div>
+    </div>
+
+    <!-- STEP 2: AUDIT CONTROLS & STATS -->
+    <div class="card">
+      <div class="card-title">
+        <span>2. Audit Controls & Summary</span>
+        <span id="lblProgress">Ready</span>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-box">
+          <div class="stat-num" id="statTotal">0</div>
+          <div class="stat-lbl">Total Queue</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-num" id="statAudited" style="color:#2563EB;">0</div>
+          <div class="stat-lbl">Audited</div>
+        </div>
+        <div class="stat-box" style="background:#FEF2F2; border-color:#FECACA;">
+          <div class="stat-num" id="statIssues" style="color:#DC2626;">0</div>
+          <div class="stat-lbl" style="color:#DC2626;">⚠️ DL in Aadhaar</div>
+        </div>
+        <div class="stat-box" style="background:#F0FDF4; border-color:#BBF7D0;">
+          <div class="stat-num" id="statClean" style="color:#16A34A;">0</div>
+          <div class="stat-lbl" style="color:#16A34A;">Clean / OK</div>
+        </div>
+      </div>
+
+      <div class="progress-bar-wrap">
+        <div id="progressBar" class="progress-bar-fill"></div>
+      </div>
+
+      <div class="btn-row" style="margin-top:8px;">
+        <button id="btnStartAudit" class="btn-primary" style="flex:1;">▶️ Start Aadhaar Audit</button>
+        <button id="btnPauseAudit" class="btn-secondary" style="display:none;">⏸️ Pause</button>
+        <button id="btnStopAudit" class="btn-danger" style="display:none;">⏹️ Stop</button>
+        <button id="btnExportExcel" class="btn-success" style="flex:1;">📥 Export Audit Report (.xlsx)</button>
+      </div>
+
+      <div id="logStatus" class="log-box" style="margin-top:6px;">Ready to audit past runs.</div>
+    </div>
+
+    <!-- STEP 3: AUDIT RESULTS TABLE -->
+    <div class="card">
+      <div class="card-title">
+        <span>3. Audit Findings Table</span>
+        <label style="font-size:10px; font-weight:600; text-transform:none; cursor:pointer; display:flex; align-items:center; gap:4px;">
+          <input type="checkbox" id="chkFilterIssuesOnly">
+          <span style="color:#DC2626;">Show Issues Only</span>
+        </label>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30px;">#</th>
+              <th style="width:110px;">GSM ID</th>
+              <th>Aadhaar Section Status</th>
+              <th>Uploaded File</th>
+              <th style="width:70px;">DL Status</th>
+            </tr>
+          </thead>
+          <tbody id="tblAuditBody">
+            <tr><td colspan="5" style="text-align:center; color:#94A3B8; padding:12px;">No records audited yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="libs/xlsx.full.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
