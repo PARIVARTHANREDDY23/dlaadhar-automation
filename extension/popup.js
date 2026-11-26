@@ -981,26 +981,20 @@ function confirmAndLoadQueue() {
   });
 }
 
-// Export All Records to Consolidated Excel (.xlsx)
+// Export All Records to Consolidated Excel (.xlsx) with Clean Professional Formatting
 function exportUpdatedExcel() {
   if (!currentLocalBatch || !currentLocalBatch.records || currentLocalBatch.records.length === 0) {
     return alert("No records to export.");
   }
 
-  // Preserve all original columns and append/update verification status
-  const exportRows = currentLocalBatch.records.map(r => {
-    const base = { ...r.original_data };
-    base["GSM ID"] = r.gsm_id || base["GSM ID"] || "";
-    if (r.driver_name) base["Driver Name"] = r.driver_name;
-    base["Mobile Number"] = r.phone_number || base["Mobile Number"] || base["Phone Number"] || "";
-    base["Driving Licence Number"] = r.dl_number || base["Driving Licence Number"] || base["DL Number"] || "";
-    base["Date of Birth"] = r.dob || base["Date of Birth"] || base["DOB"] || "";
-
+  // Build clean, structured rows with consistent column sequence
+  const exportRows = currentLocalBatch.records.map((r, idx) => {
     const isVerified = (r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded");
     const isServerError = (r.verification_status === "Server Error" || /server\s*error|500|502|503|504|bad\s*gateway|gateway\s*timeout/i.test(r.remarks || ""));
     const isFailed = !isVerified && !isServerError && (r.verification_status === "Not Verified" || r.verification_status === "Verification Error" || r.verification_status === "Incomplete Details" || r.verification_status === "Not Found on Verixa" || r.verification_status === "Record Not Found");
 
-    const doiVal = r.doi || r.card_details?.["Doi"] || r.card_details?.["Date of Issue"] || r.card_details?.["Issue Date"] || "";
+    // Capture DOI and DOE accurately from response cards or driver state
+    const doiVal = r.doi || r.card_details?.["Doi"] || r.card_details?.["Date of Issue"] || r.card_details?.["Issue Date"] || r.card_details?.["Transport Doi"] || "";
     const doeVal = r.doe || r.card_details?.["Doe"] || r.card_details?.["Date of Expiry"] || r.card_details?.["Valid Till"] || "";
     const transDoeVal = r.transport_doe || r.card_details?.["Transport Doe"] || "";
 
@@ -1009,48 +1003,73 @@ function exportUpdatedExcel() {
       expiryStatus = evaluateDlExpiry(doeVal, transDoeVal).status;
     }
 
-    base["DOI"] = doiVal || "-";
-    base["DOE"] = doeVal || "-";
-    if (transDoeVal) base["Transport DOE"] = transDoeVal;
-    base["DL Expiry Status"] = isVerified ? (expiryStatus || "Not Expired") : (isServerError ? "Server Error" : "Not Verified");
-
-    // Strictly match requirements:
-    // If verified -> "Verified" (or "Verified & Uploaded")
-    // If server error -> "Server Error"
-    // If not verified -> "Not Verified"
-    if (isVerified) {
-      base["Verification Status"] = (r.verification_status === "Verified & Uploaded" || r.upload_status === "Uploaded") ? "Verified & Uploaded" : "Verified";
-      let vRemarks = r.remarks || "Verified on Surepass";
-      if (expiryStatus === "DL Expired" && !vRemarks.toLowerCase().includes("dl expired")) {
-        vRemarks += ` (DL Expired - DOE: ${doeVal})`;
-      }
-      base["Verification Remarks"] = vRemarks;
-      base["Verixa Certificate Upload"] = "Uploaded to Verixa";
-      base["Report Filename"] = r.report_filename || "";
-      base["Processing Status"] = `Completed - Verified (${expiryStatus || 'Active'})`;
-    } else if (isServerError) {
-      base["Verification Status"] = "Server Error";
-      base["Verification Remarks"] = r.remarks || "Server Error (Surepass / SARATHI service temporarily unavailable)";
-      base["Verixa Certificate Upload"] = "Skipped (Server Error)";
-      base["Report Filename"] = "N/A (Server Error)";
-      base["Processing Status"] = `Completed - Server Error (${r.remarks || 'Upstream Server Error'})`;
-    } else if (isFailed) {
-      base["Verification Status"] = "Not Verified";
-      base["Verification Remarks"] = r.remarks || "Not Verified";
-      base["Verixa Certificate Upload"] = "Skipped (Not Verified)";
-      base["Report Filename"] = "N/A (Not Verified)";
-      base["Processing Status"] = `Completed - Not Verified (${r.remarks || 'Failed on Surepass'})`;
-    } else {
-      base["Verification Status"] = r.verification_status || "Pending";
-      base["Verification Remarks"] = r.remarks || "Pending";
-      base["Verixa Certificate Upload"] = r.upload_status || "Pending";
-      base["Report Filename"] = "Pending";
-      base["Processing Status"] = "Pending";
+    let vRemarks = r.remarks || (isVerified ? "Verified on Surepass" : (isServerError ? "Server Error" : (isFailed ? "Not Verified" : "Pending")));
+    if (isVerified && expiryStatus === "DL Expired" && !vRemarks.toLowerCase().includes("dl expired")) {
+      vRemarks += ` (DL Expired - DOE: ${doeVal})`;
     }
-    return base;
+
+    const row = {};
+    row["S.No"] = r.row_index || (idx + 1);
+    row["GSM ID"] = r.gsm_id || "";
+    row["Candidate Name"] = r.driver_name || r.card_details?.["Name"] || r.original_data?.["Driver Name"] || r.original_data?.["Candidate Name"] || r.original_data?.["Name"] || "-";
+    row["Mobile Number"] = r.phone_number || r.original_data?.["Mobile Number"] || r.original_data?.["Phone Number"] || "-";
+    row["DL Number"] = r.dl_number || r.card_details?.["License Number"] || r.original_data?.["DL Number"] || "-";
+    row["Date of Birth (DOB)"] = r.dob || r.card_details?.["DOB"] || r.original_data?.["DOB"] || "-";
+    row["Date of Issue (DOI)"] = doiVal || "-";
+    row["Date of Expiry (DOE)"] = doeVal || "-";
+    if (transDoeVal) {
+      row["Transport DOE"] = transDoeVal;
+    }
+    row["DL Expiry Status"] = isVerified ? (expiryStatus || "Not Expired") : (isServerError ? "Server Error" : (isFailed ? "Not Verified" : "Pending"));
+    row["Verification Status"] = isVerified ? (r.verification_status === "Verified & Uploaded" || r.upload_status === "Uploaded" ? "Verified & Uploaded" : "Verified") : (isServerError ? "Server Error" : (isFailed ? "Not Verified" : "Pending"));
+    row["Verixa Upload Status"] = isVerified ? (r.upload_status === "Uploaded" || r.verification_status === "Verified & Uploaded" ? "Uploaded to Verixa" : "Pending Upload") : (isServerError ? "Skipped (Server Error)" : (isFailed ? "Skipped (Not Verified)" : "Pending"));
+    row["Verification Date"] = r.verification_date || "-";
+    row["Verification Remarks"] = vRemarks;
+    row["Report Filename"] = isVerified ? (r.report_filename || `${r.gsm_id}_${r.phone_number || 'DL'}_DL_Report.pdf`) : "N/A";
+
+    // Append any extra unique columns from original file that aren't already included
+    if (r.original_data && typeof r.original_data === "object") {
+      const knownKeys = new Set([
+        "sno", "s.no", "slno", "row", "row_index", "gsm", "gsmid", "gsm_id", "drivername", "name", "candidatename",
+        "mobile", "mobilenumber", "phone", "phonenumber", "dl", "dlnumber", "drivinglicence",
+        "drivinglicencenumber", "drivinglicensenumber", "dob", "dateofbirth", "doi", "dateofissue",
+        "doe", "dateofexpiry", "transportdoe", "dlexpirystatus", "expirystatus", "verificationstatus", "status",
+        "verixauploadstatus", "uploadstatus", "verificationdate", "remarks", "verificationremarks", "reportfilename"
+      ]);
+      Object.keys(r.original_data).forEach(k => {
+        const normKey = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (!knownKeys.has(normKey) && !row.hasOwnProperty(k)) {
+          row[k] = r.original_data[k];
+        }
+      });
+    }
+
+    return row;
   });
 
   const ws = XLSX.utils.json_to_sheet(exportRows);
+
+  // Set professional auto-calculated column widths
+  if (exportRows.length > 0) {
+    const colKeys = Object.keys(exportRows[0]);
+    ws['!cols'] = colKeys.map(key => {
+      let maxLen = key.length;
+      exportRows.forEach(row => {
+        const valStr = String(row[key] || "");
+        if (valStr.length > maxLen) maxLen = valStr.length;
+      });
+      return { wch: Math.min(Math.max(maxLen + 3, 12), 40) };
+    });
+  }
+
+  // Enable Excel auto-filter across all columns
+  if (ws['!ref']) {
+    ws['!autofilter'] = { ref: ws['!ref'] };
+  }
+
+  // Freeze header row for clean scroll
+  ws['!views'] = [{ state: 'frozen', ySplit: 1, xSplit: 0 }];
+
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Verification Results");
   const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
@@ -1058,7 +1077,10 @@ function exportUpdatedExcel() {
   const blob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const reader = new FileReader();
   reader.onloadend = () => {
-    const outFilename = `Drivers_Verified_${Date.now()}.xlsx`;
+    const batchClean = (currentLocalBatch.filename || "Batch").replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const timestamp = new Date().toISOString().replace(/T/, "_").replace(/:/g, "-").split(".")[0];
+    const outFilename = `DL_Verification_Report_${batchClean}_${timestamp}.xlsx`;
+
     chrome.runtime.sendMessage({
       action: "DOWNLOAD_FILE",
       url: reader.result,
@@ -1066,7 +1088,7 @@ function exportUpdatedExcel() {
       subfolder: "" // Saves directly into Downloads folder
     }, (res) => {
       if (res && res.success) {
-        log(`✓ Exported verified Excel to Downloads/${outFilename}`, "info");
+        log(`✓ Exported clean formatted Excel to Downloads/${outFilename}`, "info");
       }
     });
   };
@@ -1079,17 +1101,26 @@ async function copyGSheetResults() {
     return alert("No records to copy.");
   }
 
-  const lines = ["GSM ID\tName\tPhone Number\tDL Number\tDOB\tDOI\tDOE\tDL Expiry Status\tVerification Status\tVerification Date\tRemarks"];
-  currentLocalBatch.records.forEach(r => {
-    const doiVal = r.doi || r.card_details?.["Doi"] || "-";
-    const doeVal = r.doe || r.card_details?.["Doe"] || "-";
-    const expVal = r.dl_expiry_status || (r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded" ? evaluateDlExpiry(doeVal, r.transport_doe).status : "-");
-    lines.push(`${r.gsm_id}\t${r.driver_name || ""}\t${r.phone_number || ""}\t${r.dl_number || ""}\t${r.dob || ""}\t${doiVal}\t${doeVal}\t${expVal}\t${r.verification_status || "Pending"}\t${r.verification_date || ""}\t${r.remarks || ""}`);
+  const lines = ["S.No\tGSM ID\tCandidate Name\tMobile Number\tDL Number\tDOB\tDOI\tDOE\tDL Expiry Status\tVerification Status\tVerixa Upload\tVerification Date\tRemarks"];
+  currentLocalBatch.records.forEach((r, idx) => {
+    const isVerified = (r.verification_status === "Verified" || r.verification_status === "Verified & Uploaded");
+    const isServerError = (r.verification_status === "Server Error" || /server\s*error/i.test(r.remarks || ""));
+    const doiVal = r.doi || r.card_details?.["Doi"] || r.card_details?.["Date of Issue"] || r.card_details?.["Issue Date"] || "-";
+    const doeVal = r.doe || r.card_details?.["Doe"] || r.card_details?.["Date of Expiry"] || r.card_details?.["Valid Till"] || "-";
+    const expVal = r.dl_expiry_status || (isVerified ? evaluateDlExpiry(doeVal, r.transport_doe).status : (isServerError ? "Server Error" : "Not Verified"));
+    const nameVal = r.driver_name || r.card_details?.["Name"] || "-";
+    const phoneVal = r.phone_number || "-";
+    const dlVal = r.dl_number || r.card_details?.["License Number"] || "-";
+    const dobVal = r.dob || "-";
+    const vStatus = isVerified ? (r.upload_status === "Uploaded" || r.verification_status === "Verified & Uploaded" ? "Verified & Uploaded" : "Verified") : (isServerError ? "Server Error" : "Not Verified");
+    const uploadStatus = isVerified ? (r.upload_status === "Uploaded" || r.verification_status === "Verified & Uploaded" ? "Uploaded to Verixa" : "Pending") : "Skipped";
+
+    lines.push(`${r.row_index || (idx + 1)}\t${r.gsm_id || ""}\t${nameVal}\t${phoneVal}\t${dlVal}\t${dobVal}\t${doiVal}\t${doeVal}\t${expVal}\t${vStatus}\t${uploadStatus}\t${r.verification_date || ""}\t${r.remarks || ""}`);
   });
 
   try {
     await navigator.clipboard.writeText(lines.join("\n"));
-    alert("📋 Verification results copied to clipboard!\n\nYou can now go to your Google Sheet, select the starting cell, and press Ctrl+V to paste.");
+    alert("📋 Clean formatted verification results copied to clipboard!\n\nYou can now go to your Google Sheet, select cell A1, and press Ctrl+V to paste.");
   } catch (err) {
     alert("Clipboard error: " + err.message);
   }
@@ -1129,7 +1160,7 @@ async function downloadAllReportsZip() {
     const reportFolder = zip.folder(folderName);
 
     // Add a consolidated Verification_Summary.csv inside the ZIP
-    let csvContent = "Row,GSM ID,DL Number,Phone Number,Candidate Name,DOI,DOE,DL Expiry Status,Verification Status,Verification Date,Remarks,Report Filename\n";
+    let csvContent = "Row,GSM ID,Candidate Name,Mobile Number,DL Number,DOB,DOI,DOE,DL Expiry Status,Verification Status,Verification Date,Remarks,Report Filename\n";
 
     let idx = 0;
     for (const r of verifiedRecords) {
@@ -1153,7 +1184,7 @@ async function downloadAllReportsZip() {
       const doeVal = r.doe || r.card_details?.["Doe"] || "-";
       const expVal = r.dl_expiry_status || evaluateDlExpiry(doeVal, r.transport_doe).status;
 
-      csvContent += `"${r.row_index}","${r.gsm_id || ''}","${r.dl_number || ''}","${r.phone_number || ''}","${r.driver_name || ''}","${doiVal}","${doeVal}","${expVal}","${r.verification_status || ''}","${r.verification_date || ''}","${(r.remarks || '').replace(/"/g, '""')}","${filename}"\n`;
+      csvContent += `"${r.row_index}","${r.gsm_id || ''}","${(r.driver_name || r.card_details?.['Name'] || '').replace(/"/g, '""')}","${r.phone_number || ''}","${r.dl_number || ''}","${r.dob || ''}","${doiVal}","${doeVal}","${expVal}","${r.verification_status || ''}","${r.verification_date || ''}","${(r.remarks || '').replace(/"/g, '""')}","${filename}"\n`;
 
       await sleep(25);
     }
