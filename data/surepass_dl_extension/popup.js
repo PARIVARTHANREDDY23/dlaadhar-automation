@@ -150,27 +150,71 @@ function evaluateDlExpiry(doeStr, transportDoeStr) {
 
   if (mainDate) {
     mainDate.setHours(0, 0, 0, 0);
-    const isExpired = mainDate.getTime() < today.getTime();
-    return {
-      isExpired,
-      status: isExpired ? "DL Expired" : "Not Expired",
-      doe: doeStr
-    };
+    const diffMs = mainDate.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays < 0) {
+      return {
+        isExpired: true,
+        status: "DL Expired",
+        category: "expired",
+        diffDays,
+        doe: doeStr
+      };
+    } else if (diffDays <= 90) {
+      return {
+        isExpired: false,
+        status: "Expiring in 3 Months",
+        category: "expiring_soon",
+        diffDays,
+        doe: doeStr
+      };
+    } else {
+      return {
+        isExpired: false,
+        status: "Not Expired",
+        category: "valid",
+        diffDays,
+        doe: doeStr
+      };
+    }
   }
 
   if (transDate) {
     transDate.setHours(0, 0, 0, 0);
-    const isExpired = transDate.getTime() < today.getTime();
-    return {
-      isExpired,
-      status: isExpired ? "DL Expired" : "Not Expired",
-      doe: transportDoeStr
-    };
+    const diffMs = transDate.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays < 0) {
+      return {
+        isExpired: true,
+        status: "DL Expired",
+        category: "expired",
+        diffDays,
+        doe: transportDoeStr
+      };
+    } else if (diffDays <= 90) {
+      return {
+        isExpired: false,
+        status: "Expiring in 3 Months",
+        category: "expiring_soon",
+        diffDays,
+        doe: transportDoeStr
+      };
+    } else {
+      return {
+        isExpired: false,
+        status: "Not Expired",
+        category: "valid",
+        diffDays,
+        doe: transportDoeStr
+      };
+    }
   }
 
   return {
     isExpired: false,
     status: "Not Expired",
+    category: "valid",
+    diffDays: 9999,
     doe: doeStr || "-"
   };
 }
@@ -728,7 +772,9 @@ function renderRecordsTable() {
 
     const expBadge = r.dl_expiry_status === "DL Expired"
       ? `<span style="background:#FEE2E2; color:#B91C1C; font-size:8px; font-weight:700; padding:1px 4px; border-radius:3px; margin-left:3px;" title="DOE: ${escapeHtml(r.doe || '-')}">Expired</span>`
-      : (r.dl_expiry_status === "Not Expired" ? `<span style="background:#DCFCE7; color:#15803D; font-size:8px; font-weight:700; padding:1px 4px; border-radius:3px; margin-left:3px;" title="DOE: ${escapeHtml(r.doe || '-')}">Valid</span>` : "");
+      : (r.dl_expiry_status === "Expiring in 3 Months"
+        ? `<span style="background:#FFEDD5; color:#C2410C; font-size:8px; font-weight:700; padding:1px 4px; border-radius:3px; margin-left:3px;" title="DOE: ${escapeHtml(r.doe || '-')}">Expiring Soon</span>`
+        : (r.dl_expiry_status === "Not Expired" ? `<span style="background:#DCFCE7; color:#15803D; font-size:8px; font-weight:700; padding:1px 4px; border-radius:3px; margin-left:3px;" title="DOE: ${escapeHtml(r.doe || '-')}">Valid</span>` : ""));
 
     return `
       <tr>
@@ -995,7 +1041,7 @@ function confirmAndLoadQueue() {
 }
 
 // Export All Records to Consolidated Excel (.xlsx) with Clean Professional Formatting
-function exportUpdatedExcel() {
+async function exportUpdatedExcel() {
   if (!currentLocalBatch || !currentLocalBatch.records || currentLocalBatch.records.length === 0) {
     return alert("No records to export.");
   }
@@ -1023,6 +1069,8 @@ function exportUpdatedExcel() {
     let vRemarks = r.remarks || (isVerified ? "Verified on Surepass" : (isServerError ? "Server Error" : (isFailed ? "Not Verified" : "Pending")));
     if (isVerified && expiryStatus === "DL Expired" && !vRemarks.toLowerCase().includes("dl expired")) {
       vRemarks += ` (DL Expired - DOE: ${doeVal})`;
+    } else if (isVerified && expiryStatus === "Expiring in 3 Months" && !vRemarks.toLowerCase().includes("expiring")) {
+      vRemarks += ` (Expiring in 3 Months - DOE: ${doeVal})`;
     }
 
     const row = {};
@@ -1066,9 +1114,8 @@ function exportUpdatedExcel() {
 
   const ws = XLSX.utils.json_to_sheet(exportRows);
 
-  // Set professional auto-calculated column widths
-  if (exportRows.length > 0) {
-    const colKeys = Object.keys(exportRows[0]);
+  const colKeys = exportRows.length > 0 ? Object.keys(exportRows[0]) : [];
+  if (colKeys.length > 0) {
     ws['!cols'] = colKeys.map(key => {
       let maxLen = key.length;
       exportRows.forEach(row => {
@@ -1091,7 +1138,156 @@ function exportUpdatedExcel() {
   XLSX.utils.book_append_sheet(wb, ws, "Verification Results");
   const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
 
-  const blob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  let finalBlob;
+  try {
+    if (typeof JSZip !== "undefined") {
+      const zip = await JSZip.loadAsync(wbout);
+
+      const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="7">
+    <!-- 0: Default -->
+    <font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>
+    <!-- 1: Header Font (White Bold) -->
+    <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/></font>
+    <!-- 2: Expired Status Badge (Dark Red Bold) -->
+    <font><b/><sz val="11"/><color rgb="FF991B1B"/><name val="Calibri"/><family val="2"/></font>
+    <!-- 3: Expiring Soon Badge (Dark Orange Bold) -->
+    <font><b/><sz val="11"/><color rgb="FFC2410C"/><name val="Calibri"/><family val="2"/></font>
+    <!-- 4: Regular Body Font -->
+    <font><sz val="10.5"/><color rgb="FF1E293B"/><name val="Calibri"/><family val="2"/></font>
+    <!-- 5: Expired Row Regular Font -->
+    <font><sz val="10.5"/><color rgb="FF7F1D1D"/><name val="Calibri"/><family val="2"/></font>
+    <!-- 6: Expiring Row Regular Font -->
+    <font><sz val="10.5"/><color rgb="FF7C2D12"/><name val="Calibri"/><family val="2"/></font>
+  </fonts>
+  <fills count="7">
+    <!-- 0 & 1: Required by OpenXML spec -->
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+    <!-- 2: Navy Blue Fill for Header (#1E3A8A) -->
+    <fill><patternFill patternType="solid"><fgColor rgb="FF1E3A8A"/><bgColor indexed="64"/></patternFill></fill>
+    <!-- 3: Red Fill for Expired Status Badge (#FEE2E2) -->
+    <fill><patternFill patternType="solid"><fgColor rgb="FFFEE2E2"/><bgColor indexed="64"/></patternFill></fill>
+    <!-- 4: Orange Fill for Expiring Soon Badge (#FFEDD5) -->
+    <fill><patternFill patternType="solid"><fgColor rgb="FFFFEDD5"/><bgColor indexed="64"/></patternFill></fill>
+    <!-- 5: Soft Light Red Tint for Expired Row Cells (#FEF2F2) -->
+    <fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill>
+    <!-- 6: Soft Light Orange Tint for Expiring Soon Row Cells (#FFF7ED) -->
+    <fill><patternFill patternType="solid"><fgColor rgb="FFFFF7ED"/><bgColor indexed="64"/></patternFill></fill>
+  </fills>
+  <borders count="2">
+    <!-- 0: None -->
+    <border><left/><right/><top/><bottom/><diagonal/></border>
+    <!-- 1: Subtle Border -->
+    <border>
+      <left style="thin"><color rgb="FFE2E8F0"/></left>
+      <right style="thin"><color rgb="FFE2E8F0"/></right>
+      <top style="thin"><color rgb="FFE2E8F0"/></top>
+      <bottom style="thin"><color rgb="FFE2E8F0"/></bottom>
+    </border>
+  </borders>
+  <cellStyleXfs count="1">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+  </cellStyleXfs>
+  <cellXfs count="7">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <!-- 1: Header Row Cell (Navy Blue Fill, White Bold, Centered) -->
+    <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">
+      <alignment horizontal="center" vertical="center" wrapText="0"/>
+    </xf>
+    <!-- 2: Expired Status Badge (Red Fill, Dark Red Bold Text) -->
+    <xf numFmtId="0" fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">
+      <alignment horizontal="center" vertical="center"/>
+    </xf>
+    <!-- 3: Expired Row Normal Cell (Light Red Tint) -->
+    <xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">
+      <alignment vertical="center"/>
+    </xf>
+    <!-- 4: Expiring Soon Badge (Orange Fill, Dark Orange Bold Text) -->
+    <xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">
+      <alignment horizontal="center" vertical="center"/>
+    </xf>
+    <!-- 5: Expiring Soon Row Normal Cell (Light Orange Tint) -->
+    <xf numFmtId="0" fontId="6" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">
+      <alignment vertical="center"/>
+    </xf>
+    <!-- 6: Standard Valid Row Cell (Clean Border) -->
+    <xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1">
+      <alignment vertical="center"/>
+    </xf>
+  </cellXfs>
+  <cellStyles count="1">
+    <cellStyle name="Normal" xfId="0" builtinId="0"/>
+  </cellStyles>
+</styleSheet>`;
+
+      zip.file('xl/styles.xml', stylesXml);
+
+      function getColLetter(colIdx) {
+        let letter = "";
+        let temp = colIdx;
+        while (temp >= 0) {
+          letter = String.fromCharCode((temp % 26) + 65) + letter;
+          temp = Math.floor(temp / 26) - 1;
+        }
+        return letter;
+      }
+
+      const expColLetter = getColLetter(colKeys.indexOf("DL Expiry Status"));
+      const doeColLetter = getColLetter(colKeys.indexOf("Date of Expiry (DOE)"));
+
+      let sheetXml = await zip.file('xl/worksheets/sheet1.xml').async('string');
+
+      sheetXml = sheetXml.replace(/<row r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g, (rowMatch, rowNumStr, innerCells) => {
+        const rowNum = parseInt(rowNumStr, 10);
+        if (rowNum === 1) {
+          const updatedCells = innerCells.replace(/<c r="([A-Z]+1)"([^>]*)>/g, (cMatch, cellRef, otherAttrs) => {
+            let cleanAttrs = otherAttrs.replace(/\s*s="[^"]*"/g, '');
+            return `<c r="${cellRef}" s="1"${cleanAttrs}>`;
+          });
+          return `<row r="1" ht="28" customHeight="1">${updatedCells}</row>`;
+        }
+
+        const rowData = exportRows[rowNum - 2];
+        const expiryStatus = rowData ? (rowData["DL Expiry Status"] || "") : "";
+        const isExpired = (expiryStatus === "DL Expired" || (expiryStatus.toLowerCase().includes("expired") && !expiryStatus.toLowerCase().includes("not")));
+        const isExpiringSoon = (expiryStatus === "Expiring in 3 Months" || expiryStatus === "Expiring Soon" || (expiryStatus.toLowerCase().includes("expiring") && !expiryStatus.toLowerCase().includes("not")));
+
+        const updatedCells = innerCells.replace(/<c r="([A-Z]+)(\d+)"([^>]*)>([\s\S]*?)(<\/c>|\/>)/g, (cMatch, colLetter, rIdx, otherAttrs, cellContent, closing) => {
+          let cleanAttrs = otherAttrs.replace(/\s*s="[^"]*"/g, '');
+          let styleId = 6; // Standard valid cell
+
+          const isBadgeCol = (colLetter === expColLetter || colLetter === doeColLetter);
+
+          if (isExpired) {
+            styleId = isBadgeCol ? 2 : 3;
+          } else if (isExpiringSoon) {
+            styleId = isBadgeCol ? 4 : 5;
+          }
+
+          return `<c r="${colLetter}${rIdx}" s="${styleId}"${cleanAttrs}>${cellContent}${closing}`;
+        });
+
+        return `<row r="${rowNum}" ht="22" customHeight="1">${updatedCells}</row>`;
+      });
+
+      zip.file('xl/worksheets/sheet1.xml', sheetXml);
+
+      finalBlob = await zip.generateAsync({
+        type: "blob",
+        compression: "DEFLATE",
+        compressionOptions: { level: 6 }
+      });
+    }
+  } catch (err) {
+    console.warn("[Excel Export] JSZip styling fallback:", err);
+  }
+
+  if (!finalBlob) {
+    finalBlob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  }
+
   const reader = new FileReader();
   reader.onloadend = () => {
     const batchClean = (currentLocalBatch.filename || "Batch").replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -1105,11 +1301,11 @@ function exportUpdatedExcel() {
       subfolder: "" // Saves directly into Downloads folder
     }, (res) => {
       if (res && res.success) {
-        log(`✓ Exported clean formatted Excel to Downloads/${outFilename}`, "info");
+        log(`✓ Exported clean styled Excel (Navy Header, Red Expired, Orange Expiring Soon) to Downloads/${outFilename}`, "info");
       }
     });
   };
-  reader.readAsDataURL(blob);
+  reader.readAsDataURL(finalBlob);
 }
 
 // Copy G-Sheet Tab-Separated Results to Clipboard

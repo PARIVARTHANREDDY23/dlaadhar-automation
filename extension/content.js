@@ -214,27 +214,71 @@ function evaluateDlExpiry(doeStr, transportDoeStr) {
 
   if (mainDate) {
     mainDate.setHours(0, 0, 0, 0);
-    const isExpired = mainDate.getTime() < today.getTime();
-    return {
-      isExpired,
-      status: isExpired ? "DL Expired" : "Not Expired",
-      doe: doeStr
-    };
+    const diffMs = mainDate.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays < 0) {
+      return {
+        isExpired: true,
+        status: "DL Expired",
+        category: "expired",
+        diffDays,
+        doe: doeStr
+      };
+    } else if (diffDays <= 90) {
+      return {
+        isExpired: false,
+        status: "Expiring in 3 Months",
+        category: "expiring_soon",
+        diffDays,
+        doe: doeStr
+      };
+    } else {
+      return {
+        isExpired: false,
+        status: "Not Expired",
+        category: "valid",
+        diffDays,
+        doe: doeStr
+      };
+    }
   }
 
   if (transDate) {
     transDate.setHours(0, 0, 0, 0);
-    const isExpired = transDate.getTime() < today.getTime();
-    return {
-      isExpired,
-      status: isExpired ? "DL Expired" : "Not Expired",
-      doe: transportDoeStr
-    };
+    const diffMs = transDate.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays < 0) {
+      return {
+        isExpired: true,
+        status: "DL Expired",
+        category: "expired",
+        diffDays,
+        doe: transportDoeStr
+      };
+    } else if (diffDays <= 90) {
+      return {
+        isExpired: false,
+        status: "Expiring in 3 Months",
+        category: "expiring_soon",
+        diffDays,
+        doe: transportDoeStr
+      };
+    } else {
+      return {
+        isExpired: false,
+        status: "Not Expired",
+        category: "valid",
+        diffDays,
+        doe: transportDoeStr
+      };
+    }
   }
 
   return {
     isExpired: false,
     status: "Not Expired",
+    category: "valid",
+    diffDays: 9999,
     doe: doeStr || "-"
   };
 }
