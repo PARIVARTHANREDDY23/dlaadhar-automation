@@ -1937,10 +1937,17 @@ async function runAutomationLoop() {
           }
 
           if (uploadRes && uploadRes.success) {
-            log(`✓ [Verixa360] Certificate successfully uploaded for ${driver.gsm_id}!`, "info");
-            driver.verification_status = "Verified & Uploaded";
-            driver.remarks = "Verified on Surepass & DL Certificate uploaded to Verixa";
-            driver.upload_status = "Uploaded";
+            if (uploadRes.alreadyOnFile) {
+              log(`✓ [Verixa360] DL Report already on file for ${driver.gsm_id} (Skipped re-upload, preserved safely)`, "info");
+              driver.verification_status = "Verified & Uploaded";
+              driver.remarks = "Verified on Surepass (DL Certificate already on file on Verixa)";
+              driver.upload_status = "Uploaded (Already on File)";
+            } else {
+              log(`✓ [Verixa360] Certificate successfully uploaded for ${driver.gsm_id}!`, "info");
+              driver.verification_status = "Verified & Uploaded";
+              driver.remarks = "Verified on Surepass & DL Certificate uploaded to Verixa";
+              driver.upload_status = "Uploaded";
+            }
           } else {
             log(`⚠️ [Verixa360] Upload notice: ${uploadRes?.reason || "Pending manual upload"}`, "warn");
             driver.verification_status = "Verified";

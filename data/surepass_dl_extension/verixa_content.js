@@ -404,6 +404,21 @@ async function uploadDlCertificateToVerixa(pdfBase64, filename, gsmId) {
     await sleep(500);
   }
 
+  // Helper to ensure an element belongs STRICTLY to the Driving Licence section and NEVER to Aadhaar or others
+  function isStrictlyDlElement(el) {
+    if (!el) return false;
+    let cur = el;
+    while (cur && cur !== document.body) {
+      const txt = (cur.innerText || "").toLowerCase();
+      // If container mentions Aadhaar, PAN, PCC, CRC, etc. without being the DL section, strictly reject!
+      if (/aadhaar|uidai|pan\s*card|police\s*clearance|crc\s*response|pcc\s*ack|physical\s*verification/i.test(txt) && !/driving\s*licen[sc]e/i.test(txt)) {
+        return false;
+      }
+      cur = cur.parentElement;
+    }
+    return true;
+  }
+
   // Step 2: Locate the exact "Driving licence certificate" heading and row (Image 3)
   const allDlHeadings = Array.from(document.querySelectorAll("div, h1, h2, h3, h4, h5, span, p, label, b, strong")).filter(el => {
     if (!visible(el)) return false;
@@ -417,24 +432,37 @@ async function uploadDlCertificateToVerixa(pdfBase64, filename, gsmId) {
     return { success: false, reason: "Could not locate 'Driving licence certificate' section under Verification results." };
   }
 
-  // Locate the specific row/card container for Driving licence certificate
+  // Locate the specific row/card container for Driving licence certificate STRICTLY without escaping into Aadhaar/parent
   let dlRow = dlHeading.parentElement;
   while (dlRow && dlRow !== document.body) {
+    const parent = dlRow.parentElement;
+    if (!parent) break;
+    const parentTxt = (parent.innerText || "").toLowerCase();
+    // STOP climbing immediately if parent contains sibling document headings (Aadhaar, PAN, CRC, PCC, Police)
+    if (/aadhaar|uidai|pan\s*card|police\s*clearance|crc\s*response|pcc\s*ack|physical\s*verification/i.test(parentTxt)) {
+      break;
+    }
+    dlRow = parent;
     if (dlRow.querySelector('input[type="file"]') || 
         Array.from(dlRow.querySelectorAll("button, a, label, span, [role=button]")).some(b => /choose\s*file|file\s*it|replace/i.test(b.innerText || ""))) {
       break;
     }
-    dlRow = dlRow.parentElement;
   }
   if (!dlRow) dlRow = dlHeading.parentElement;
 
-  // Step 3: Check if certificate is already on file ("Replace" button present)
+  // Step 3: Check if certificate is already on file ("✓ on file", "View ↗", or "Replace" button present)
+  const dlRowText = (dlRow.innerText || "").toLowerCase();
+  const alreadyOnFile = dlRowText.includes("on file") || 
+                        Array.from(dlRow.querySelectorAll("a, button, span")).some(b => visible(b) && /view/i.test((b.innerText || "").trim()));
+
   const replaceBtn = Array.from(dlRow.querySelectorAll("button, a, label, span, [role=button]")).find(b => 
     visible(b) && /^\s*replace\s*$/i.test((b.innerText || b.value || "").trim())
   );
 
-  if (replaceBtn) {
-    console.log("[Verixa360 Assistant] Certificate already exists. Clicking 'Replace'...");
+  let fileInput = null;
+
+  if (alreadyOnFile && replaceBtn) {
+    console.log("[Verixa360 Assistant] DL Certificate already exists on file. Attempting 'Replace' strictly in DL...");
     replaceBtn.click();
     await sleep(600);
 
@@ -451,29 +479,52 @@ async function uploadDlCertificateToVerixa(pdfBase64, filename, gsmId) {
     );
     if (confirmReplaceBtn) {
       try { confirmReplaceBtn.click(); } catch (e) {}
-      await sleep(400);
+      await sleep(500);
     }
+
+    // Check if a file input opened strictly in dlRow or in active replacement modal
+    fileInput = dlRow.querySelector('input[type="file"]');
+    if (!fileInput) {
+      const modal = document.querySelector('[role=dialog], .modal, .ant-modal, .swal2-modal');
+      if (modal && modal.querySelector('input[type="file"]')) {
+        fileInput = modal.querySelector('input[type="file"]');
+      }
+    }
+
+    // If replacement did NOT produce a file input strictly for DL, DO NOT SEARCH THE PAGE!
+    if (!fileInput) {
+      console.log(`[Verixa360 Assistant] DL report is already on file for ${gsmId} (View ↗ verified). Preserving existing DL certificate safely without touching other fields.`);
+      setVerixaPill(`✓ DL Certificate Already on File`, "info");
+      return {
+        success: true,
+        alreadyOnFile: true,
+        message: `DL verification report already on file and viewable on Verixa for ${gsmId}. Kept existing file safely.`
+      };
+    }
+  } else if (alreadyOnFile && !replaceBtn) {
+    // Already on file with no replace button
+    console.log(`[Verixa360 Assistant] DL report is already on file for ${gsmId} (View ↗ verified). Skipping upload to avoid overwriting.`);
+    setVerixaPill(`✓ DL Certificate Already on File`, "info");
+    return {
+      success: true,
+      alreadyOnFile: true,
+      message: `DL verification report already on file and viewable on Verixa for ${gsmId}.`
+    };
   }
 
-  // Step 4: Locate file input specifically for Driving licence certificate
-  let fileInput = dlRow.querySelector('input[type="file"]');
+  // Step 4: Locate file input strictly within DL section (Fresh Upload)
   if (!fileInput) {
-    // Proximity fallback: find file input vertically closest to dlHeading
-    const allInputs = Array.from(document.querySelectorAll('input[type="file"]'));
-    if (allInputs.length > 0) {
-      const hRect = dlHeading.getBoundingClientRect();
-      allInputs.sort((a, b) => {
-        const aRect = a.getBoundingClientRect();
-        const bRect = b.getBoundingClientRect();
-        return Math.abs(aRect.top - hRect.top) - Math.abs(bRect.top - hRect.top);
-      });
-      fileInput = allInputs[0];
-    }
+    fileInput = dlRow.querySelector('input[type="file"]');
   }
 
-  if (!fileInput) {
-    setVerixaPill(`⚠️ No file input found`, "err");
-    return { success: false, reason: "Could not find file upload input for Driving licence certificate." };
+  // STRICT ASSERTION: If file input is not inside dlRow, or if it belongs to an Aadhaar/other container, ABORT IMMEDIATELY!
+  if (!fileInput || !isStrictlyDlElement(fileInput)) {
+    console.warn(`[Verixa360 Assistant] 🛑 Refusing to upload: No valid file input found strictly inside Driving licence certificate.`);
+    setVerixaPill(`⚠️ No DL file input found`, "err");
+    return { 
+      success: false, 
+      reason: "Could not find file upload input strictly inside 'Driving licence certificate'. Upload aborted to prevent touching Aadhaar or other document fields." 
+    };
   }
 
   // Step 5: Convert Base64 data back to native File object and attach
@@ -494,7 +545,7 @@ async function uploadDlCertificateToVerixa(pdfBase64, filename, gsmId) {
     fileInput.dispatchEvent(new Event("change", { bubbles: true }));
     fileInput.dispatchEvent(new Event("input", { bubbles: true }));
 
-    // Drop target fallback if dropzone is present
+    // Drop target fallback if dropzone is present strictly inside dlRow
     const dropTarget = dlRow.querySelector("label, .dropzone, [data-dropzone]");
     if (dropTarget) {
       try {
@@ -504,50 +555,50 @@ async function uploadDlCertificateToVerixa(pdfBase64, filename, gsmId) {
 
     await sleep(800);
 
-    // Step 6: Click the "File it" button for Driving licence certificate (Image 3)
-    // Note: In Image 3, [File it] is directly adjacent to [Choose File] in the DL row!
-    console.log("[Verixa360 Assistant] Locating 'File it' button for Driving licence certificate...");
+    // Step 6: Click the "File it" button STRICTLY for Driving licence certificate (Image 3)
+    console.log("[Verixa360 Assistant] Locating 'File it' button strictly for Driving licence certificate...");
 
     let fileItBtn = Array.from(dlRow.querySelectorAll("button, a, [role=button], input[type=submit], span")).find(b => 
       visible(b) && !b.disabled && /^\s*file\s*it\s*$/i.test((b.innerText || b.value || "").trim())
     );
 
+    // If replacement was done inside a modal, check modal
     if (!fileItBtn) {
-      // Proximity search: find button labeled "File it" horizontally/vertically aligned with this fileInput
-      const allFileIt = Array.from(document.querySelectorAll("button, a, [role=button], input[type=submit], span")).filter(b => 
-        visible(b) && !b.disabled && /^\s*file\s*it\s*$/i.test((b.innerText || b.value || "").trim())
-      );
-      if (allFileIt.length > 0) {
-        const fRect = fileInput.getBoundingClientRect();
-        allFileIt.sort((a, b) => {
-          return Math.abs(a.getBoundingClientRect().top - fRect.top) - Math.abs(b.getBoundingClientRect().top - fRect.top);
-        });
-        fileItBtn = allFileIt[0];
+      const modal = document.querySelector('[role=dialog], .modal, .ant-modal, .swal2-modal');
+      if (modal) {
+        fileItBtn = Array.from(modal.querySelectorAll("button, a, [role=button], input[type=submit]")).find(b => 
+          visible(b) && !b.disabled && /^\s*(?:file\s*it|upload|save|confirm|submit)\s*$/i.test((b.innerText || b.value || "").trim())
+        );
       }
     }
 
-    if (fileItBtn) {
-      const btnLabel = (fileItBtn.innerText || fileItBtn.value || "File it").trim();
-      console.log(`[Verixa360 Assistant] Clicking submission button: "${btnLabel}"...`);
-      try {
-        fileItBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-        fileItBtn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
-        fileItBtn.click();
-      } catch (e) {
-        fileItBtn.click();
-      }
-      await sleep(2000);
-    } else {
-      // Fallback: check for Save or Upload
-      const uploadBtn = Array.from(dlRow.querySelectorAll("button, a, [role=button], input[type=submit]")).find(b => 
+    if (!fileItBtn) {
+      // Fallback: check for Save or Upload strictly inside dlRow
+      fileItBtn = Array.from(dlRow.querySelectorAll("button, a, [role=button], input[type=submit]")).find(b => 
         visible(b) && !b.disabled && /^\s*(?:upload|save|submit)\s*$/i.test((b.innerText || b.value || "").trim())
       );
-      if (uploadBtn) {
-        console.log(`[Verixa360 Assistant] Clicking fallback button: "${uploadBtn.innerText.trim()}"`);
-        uploadBtn.click();
-        await sleep(2000);
-      }
     }
+
+    // STRICT ASSERTION: If fileItBtn is not found strictly inside dlRow or modal, or if it's in Aadhaar, DO NOT CLICK!
+    if (!fileItBtn || !isStrictlyDlElement(fileItBtn)) {
+      console.warn(`[Verixa360 Assistant] 🛑 Refusing to click submission: 'File it' button was not strictly inside Driving licence certificate.`);
+      setVerixaPill(`⚠️ No DL 'File it' button`, "err");
+      return {
+        success: false,
+        reason: "Could not find 'File it' button strictly inside 'Driving licence certificate'. Submission aborted to protect Aadhaar and other fields."
+      };
+    }
+
+    const btnLabel = (fileItBtn.innerText || fileItBtn.value || "File it").trim();
+    console.log(`[Verixa360 Assistant] Clicking submission button strictly for DL: "${btnLabel}"...`);
+    try {
+      fileItBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      fileItBtn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+      fileItBtn.click();
+    } catch (e) {
+      fileItBtn.click();
+    }
+    await sleep(2000);
 
     // Modal confirmation check (if a secondary dialog asks to confirm upload)
     const modalConfirmBtn = Array.from(document.querySelectorAll("[role=dialog] button, .modal button, .swal2-confirm, .ant-modal button")).find(b => 
