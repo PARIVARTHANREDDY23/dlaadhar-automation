@@ -70,83 +70,118 @@ function formatDobForInput(dobStr, inputType) {
   return cleaned;
 }
 
+// Extract clean date string (YYYY-MM-DD or DD-MM-YYYY) from text
+function extractDateFromText(text) {
+  if (!text || typeof text !== "string") return "";
+  const clean = text.trim();
+  // 1. Match YYYY-MM-DD
+  const m1 = clean.match(/\b(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})\b/);
+  if (m1) return m1[1];
+  // 2. Match DD-MM-YYYY
+  const m2 = clean.match(/\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b/);
+  if (m2) return m2[1];
+  return "";
+}
+
 // Extract verified fields from the Surepass Response Card
 function extractSurepassCardDetails() {
   const details = {};
+
+  const responseBlock = Array.from(document.querySelectorAll("div, section, main")).find(d =>
+    (d.innerText || "").includes("Response") && (d.innerText || "").includes("License Number")
+  ) || document.body;
+
+  const blockText = responseBlock ? responseBlock.innerText : document.body.innerText;
+
+  // 1. Direct Regex Extraction for Dates with Negative Lookahead (Prevents label collision!)
+  const reTransDoe = /(?:^|\b)Transport\s*Doe\s*[:\n\r\t]+\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/i;
+  const reTransDoi = /(?:^|\b)Transport\s*Doi\s*[:\n\r\t]+\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/i;
+  const reDoe = /(?<!Transport\s)(?<!Transport)\b(?:Doe|Date\s*of\s*Expiry|Valid\s*Till)\s*[:\n\r\t]+\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/i;
+  const reDoi = /(?<!Transport\s)(?<!Transport)\b(?:Doi|Date\s*of\s*Issue|Issue\s*Date)\s*[:\n\r\t]+\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{4})/i;
+  const reDob = /(?:^|\b)(?:DOB|Date\s*of\s*Birth)\s*[:\n\r\t]+\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/i;
+
+  const mTransDoe = blockText.match(reTransDoe);
+  if (mTransDoe) details["Transport Doe"] = mTransDoe[1].trim();
+
+  const mTransDoi = blockText.match(reTransDoi);
+  if (mTransDoi) details["Transport Doi"] = mTransDoi[1].trim();
+
+  const mDoe = blockText.match(reDoe);
+  if (mDoe) details["Doe"] = mDoe[1].trim();
+
+  const mDoi = blockText.match(reDoi);
+  if (mDoi) details["Doi"] = mDoi[1].trim();
+
+  const mDob = blockText.match(reDob);
+  if (mDob) details["DOB"] = mDob[1].trim();
+
+  // 2. DOM-based card extraction with exact card container isolation
+  const allCardBoxes = Array.from(document.querySelectorAll("div, section, article, td")).filter(c => {
+    if (!c || c.children.length > 6) return false;
+    const txt = (c.innerText || "").trim();
+    return txt.length > 2 && txt.length < 250;
+  });
+
+  const knownFieldLabels = new Set([
+    "client id", "license number", "state", "name", "permanent address", "permanent zip",
+    "temporary address", "temporary zip", "city name", "citizenship", "father name",
+    "father/husband name", "father or husband name", "dob", "date of birth", "gender",
+    "blood group", "badge number", "class of vehicle", "cov", "doi", "doe",
+    "transport doi", "transport doe", "date of issue", "date of expiry", "issue date",
+    "valid till", "non transport", "transport", "ola name", "ola code", "has image"
+  ]);
+
   const fields = [
     "Client ID", "License Number", "State", "Name",
     "Permanent Address", "Permanent Zip", "Temporary Address",
     "Temporary Zip", "City Name", "Citizenship",
     "Father Name", "Father/Husband Name", "Father Or Husband Name",
-    "DOB", "Date of Birth",
-    "Gender", "Blood Group", "Badge Number", "Class of Vehicle",
+    "DOB", "Gender", "Blood Group", "Badge Number", "Class of Vehicle",
     "COV", "Doi", "Doe", "Transport Doi", "Transport Doe",
-    "Date of Issue", "Date of Expiry", "Issue Date", "Valid Till",
-    "Non Transport", "Transport", "Ola Name", "Ola Code", "Has Image"
+    "Ola Name", "Ola Code", "Has Image"
   ];
 
-  // Strategy 1: Find individual field cards (Image 1: Each card has label on top and value below)
-  const allContainers = Array.from(document.querySelectorAll("div, section, td, tr, li, article"));
-  fields.forEach(f => {
-    const fLower = f.toLowerCase();
-    const matchingContainer = allContainers.find(c => {
-      if (!c || c.children.length > 8) return false;
-      const txt = (c.innerText || "").trim().toLowerCase();
-      return (txt.startsWith(fLower + "\n") || txt.startsWith(fLower + ":") || txt === fLower) && txt.length < 350;
-    });
-
-    if (matchingContainer) {
-      const lines = matchingContainer.innerText.split("\n").map(s => s.trim()).filter(Boolean);
-      const labelIdx = lines.findIndex(l => l.toLowerCase() === fLower || l.toLowerCase().startsWith(fLower + ":"));
-      if (labelIdx !== -1 && lines[labelIdx + 1]) {
-        details[f] = lines[labelIdx + 1];
-      }
-    }
-  });
-
-  // Strategy 2: Look at label element's sibling and parent
-  const allEl = Array.from(document.querySelectorAll("div, span, p, td, b, th, strong, label"));
   fields.forEach(f => {
     if (details[f]) return;
     const fLower = f.toLowerCase();
-    const el = allEl.find(e => {
-      const txt = (e.innerText || "").trim().toLowerCase();
-      return (txt === fLower || txt === fLower + ":") && e.children.length <= 1;
+    const isDateField = /doi|doe|date|valid/i.test(f);
+
+    const box = allCardBoxes.find(b => {
+      const bTxt = (b.innerText || "").trim().toLowerCase();
+      return bTxt.startsWith(fLower + "\n") || bTxt.startsWith(fLower + ":") || bTxt === fLower;
     });
-    if (el) {
-      const sib = el.nextElementSibling;
-      if (sib && (sib.innerText || "").trim()) {
-        details[f] = sib.innerText.trim();
+
+    if (box) {
+      if (isDateField) {
+        const foundDate = extractDateFromText(box.innerText);
+        if (foundDate) details[f] = foundDate;
       } else {
-        const parent = el.parentElement;
-        if (parent) {
-          const lines = parent.innerText.split("\n").map(s => s.trim()).filter(Boolean);
-          const idx = lines.findIndex(l => l.toLowerCase() === fLower || l.toLowerCase().startsWith(fLower + ":"));
-          if (idx !== -1 && lines[idx + 1]) {
-            details[f] = lines[idx + 1];
+        const lines = box.innerText.split("\n").map(s => s.trim()).filter(Boolean);
+        const lIdx = lines.findIndex(l => l.toLowerCase() === fLower || l.toLowerCase().startsWith(fLower + ":"));
+        if (lIdx !== -1 && lines[lIdx + 1]) {
+          const candVal = lines[lIdx + 1];
+          // Value must NOT be another field label
+          if (!knownFieldLabels.has(candVal.toLowerCase())) {
+            details[f] = candVal;
           }
         }
       }
     }
   });
 
-  // Strategy 3: Multi-line regex match against Response block or body text
-  const responseBlock = Array.from(document.querySelectorAll("div, section, main")).find(d =>
-    (d.innerText || "").includes("Response") && (d.innerText || "").includes("License Number")
-  ) || document.body;
-
-  if (responseBlock) {
-    const blockText = responseBlock.innerText;
-    fields.forEach(f => {
-      if (!details[f]) {
-        const re = new RegExp("(?:^|\\n)\\s*" + f.replace(/[/]/g, "[/]") + "\\s*[:\\n\\t]+\\s*([^\\n\\r]+)", "im");
-        const m = blockText.match(re);
-        if (m && m[1]) {
-          details[f] = m[1].trim();
+  // Fallback for non-date fields from block text
+  fields.forEach(f => {
+    if (!details[f] && !/doi|doe|date|valid/i.test(f)) {
+      const re = new RegExp("(?:^|\\n)\\s*" + f.replace(/[/]/g, "[/]") + "\\s*[:\\n\\t]+\\s*([^\\n\\r]+)", "im");
+      const m = blockText.match(re);
+      if (m && m[1]) {
+        const candVal = m[1].trim();
+        if (!knownFieldLabels.has(candVal.toLowerCase())) {
+          details[f] = candVal;
         }
       }
-    });
-  }
+    }
+  });
 
   return details;
 }
@@ -613,14 +648,28 @@ async function verifyDriverOnPage(driver) {
     if (!cardDetails["Name"]) cardDetails["Name"] = driver.driver_name || "Verified Candidate";
     console.log("[Surepass Assistant] Extracted Card Details:", cardDetails);
 
-    // Step: Capture DOI (Date of Issue) and DOE (Date of Expiry) before downloading
-    doi = cardDetails["Doi"] || cardDetails["Date of Issue"] || cardDetails["Issue Date"] || cardDetails["Transport Doi"] || "";
-    doe = cardDetails["Doe"] || cardDetails["Date of Expiry"] || cardDetails["Valid Till"] || "";
-    transportDoe = cardDetails["Transport Doe"] || "";
-    transportDoi = cardDetails["Transport Doi"] || "";
+    // Step: Capture DOI (Date of Issue) and DOE (Date of Expiry) before downloading with strict date validation
+    doi = extractDateFromText(cardDetails["Doi"]) || 
+          extractDateFromText(cardDetails["Date of Issue"]) || 
+          extractDateFromText(cardDetails["Issue Date"]) || 
+          extractDateFromText(cardDetails["Transport Doi"]) || "";
+
+    doe = extractDateFromText(cardDetails["Doe"]) || 
+          extractDateFromText(cardDetails["Date of Expiry"]) || 
+          extractDateFromText(cardDetails["Valid Till"]) || "";
+
+    transportDoe = extractDateFromText(cardDetails["Transport Doe"]) || "";
+    transportDoi = extractDateFromText(cardDetails["Transport Doi"]) || "";
+
+    // Sync clean validated date values back into cardDetails
+    if (doi) cardDetails["Doi"] = doi;
+    if (doe) cardDetails["Doe"] = doe;
+    if (transportDoe) cardDetails["Transport Doe"] = transportDoe;
+    if (transportDoi) cardDetails["Transport Doi"] = transportDoi;
+
     expiryResult = evaluateDlExpiry(doe, transportDoe);
 
-    console.log(`[Surepass Assistant] Captured DOI: "${doi}" | DOE: "${doe}" (Transport DOE: "${transportDoe}") | Expiry Status: "${expiryResult.status}"`);
+    console.log(`[Surepass Assistant] Strictly Validated Dates ➔ DOI: "${doi}" | DOE: "${doe}" (Transport DOE: "${transportDoe}") | Expiry Status: "${expiryResult.status}"`);
 
     // Suppress blocking native window.print modal (Image 2) so automation continues smoothly
     try {

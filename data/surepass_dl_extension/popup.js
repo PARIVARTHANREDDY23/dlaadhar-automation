@@ -109,6 +109,19 @@ function getRtoFromDl(dlNumber, stateName) {
   };
 }
 
+// Extract clean date string (YYYY-MM-DD or DD-MM-YYYY) from text (never allows field labels like 'Transport Doe')
+function extractDateFromText(text) {
+  if (!text || typeof text !== "string") return "";
+  const clean = text.trim();
+  // 1. Match YYYY-MM-DD
+  const m1 = clean.match(/\b(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})\b/);
+  if (m1) return m1[1];
+  // 2. Match DD-MM-YYYY
+  const m2 = clean.match(/\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b/);
+  if (m2) return m2[1];
+  return "";
+}
+
 // Evaluate if Driving Licence Date of Expiry (DOE) is before today's date
 function evaluateDlExpiry(doeStr, transportDoeStr) {
   function parseDateSafe(str) {
@@ -993,13 +1006,17 @@ function exportUpdatedExcel() {
     const isServerError = (r.verification_status === "Server Error" || /server\s*error|500|502|503|504|bad\s*gateway|gateway\s*timeout/i.test(r.remarks || ""));
     const isFailed = !isVerified && !isServerError && (r.verification_status === "Not Verified" || r.verification_status === "Verification Error" || r.verification_status === "Incomplete Details" || r.verification_status === "Not Found on Verixa" || r.verification_status === "Record Not Found");
 
-    // Capture DOI and DOE accurately from response cards or driver state
-    const doiVal = r.doi || r.card_details?.["Doi"] || r.card_details?.["Date of Issue"] || r.card_details?.["Issue Date"] || r.card_details?.["Transport Doi"] || "";
-    const doeVal = r.doe || r.card_details?.["Doe"] || r.card_details?.["Date of Expiry"] || r.card_details?.["Valid Till"] || "";
-    const transDoeVal = r.transport_doe || r.card_details?.["Transport Doe"] || "";
+    // Capture DOI and DOE accurately from response cards or driver state and strictly enforce date extraction
+    const rawDoi = r.doi || r.card_details?.["Doi"] || r.card_details?.["Date of Issue"] || r.card_details?.["Issue Date"] || r.card_details?.["Transport Doi"] || "";
+    const rawDoe = r.doe || r.card_details?.["Doe"] || r.card_details?.["Date of Expiry"] || r.card_details?.["Valid Till"] || "";
+    const rawTransDoe = r.transport_doe || r.card_details?.["Transport Doe"] || "";
+
+    const doiVal = extractDateFromText(rawDoi) || "-";
+    const doeVal = extractDateFromText(rawDoe) || "-";
+    const transDoeVal = extractDateFromText(rawTransDoe);
 
     let expiryStatus = r.dl_expiry_status || "";
-    if (!expiryStatus && isVerified) {
+    if ((!expiryStatus || expiryStatus === "Not Expired") && isVerified && doeVal !== "-") {
       expiryStatus = evaluateDlExpiry(doeVal, transDoeVal).status;
     }
 
@@ -1561,11 +1578,23 @@ async function runAutomationLoop() {
     driver.report_filename = reportFilename;
     driver.card_details = result.card_details || driver.card_details || {};
 
-    // Capture DOI and DOE and evaluate Expiry before proceeding to download/upload
-    driver.doi = result.doi || result.card_details?.["Doi"] || result.card_details?.["Date of Issue"] || result.card_details?.["Issue Date"] || "";
-    driver.doe = result.doe || result.card_details?.["Doe"] || result.card_details?.["Date of Expiry"] || result.card_details?.["Valid Till"] || "";
-    driver.transport_doi = result.transport_doi || result.card_details?.["Transport Doi"] || "";
-    driver.transport_doe = result.transport_doe || result.card_details?.["Transport Doe"] || "";
+    // Capture DOI and DOE and evaluate Expiry before proceeding to download/upload with strict date validation
+    const rawDoi = result.doi || result.card_details?.["Doi"] || result.card_details?.["Date of Issue"] || result.card_details?.["Issue Date"] || result.card_details?.["Transport Doi"] || "";
+    const rawDoe = result.doe || result.card_details?.["Doe"] || result.card_details?.["Date of Expiry"] || result.card_details?.["Valid Till"] || "";
+    const rawTransDoi = result.transport_doi || result.card_details?.["Transport Doi"] || "";
+    const rawTransDoe = result.transport_doe || result.card_details?.["Transport Doe"] || "";
+
+    driver.doi = extractDateFromText(rawDoi);
+    driver.doe = extractDateFromText(rawDoe);
+    driver.transport_doi = extractDateFromText(rawTransDoi);
+    driver.transport_doe = extractDateFromText(rawTransDoe);
+
+    // Sync validated date strings back to card_details
+    if (driver.doi) driver.card_details["Doi"] = driver.doi;
+    if (driver.doe) driver.card_details["Doe"] = driver.doe;
+    if (driver.transport_doe) driver.card_details["Transport Doe"] = driver.transport_doe;
+    if (driver.transport_doi) driver.card_details["Transport Doi"] = driver.transport_doi;
+
     driver.dl_expiry_status = result.dl_expiry_status || evaluateDlExpiry(driver.doe, driver.transport_doe).status;
     driver.is_dl_expired = (driver.dl_expiry_status === "DL Expired");
 
