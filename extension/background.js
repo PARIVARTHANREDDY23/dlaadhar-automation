@@ -91,9 +91,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "DOWNLOAD_FILE") {
-    const fileUrl = request.url;
+    let fileUrl = request.url;
     const filename = request.filename || `Export_${Date.now()}.xlsx`;
     const destinationPath = filename;
+
+    // Safety guard: If an Excel file (.xlsx) is being downloaded from a data URI, ensure MIME type is strictly spreadsheetml so Chrome never forces .zip
+    if (destinationPath.toLowerCase().endsWith(".xlsx") && fileUrl && typeof fileUrl === "string") {
+      fileUrl = fileUrl.replace(/^data:application\/zip;/i, "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;");
+    }
 
     if (!fileUrl) {
       sendResponse({ success: false, error: "Missing download URL" });

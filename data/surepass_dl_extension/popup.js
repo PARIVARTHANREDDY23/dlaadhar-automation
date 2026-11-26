@@ -1276,6 +1276,7 @@ async function exportUpdatedExcel() {
 
       finalBlob = await zip.generateAsync({
         type: "blob",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         compression: "DEFLATE",
         compressionOptions: { level: 6 }
       });
@@ -1284,28 +1285,47 @@ async function exportUpdatedExcel() {
     console.warn("[Excel Export] JSZip styling fallback:", err);
   }
 
+  const EXCEL_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   if (!finalBlob) {
-    finalBlob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    finalBlob = new Blob([wbout], { type: EXCEL_MIME });
+  } else if (finalBlob.type !== EXCEL_MIME) {
+    finalBlob = new Blob([finalBlob], { type: EXCEL_MIME });
   }
 
-  const reader = new FileReader();
-  reader.onloadend = () => {
-    const batchClean = (currentLocalBatch.filename || "Batch").replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_");
-    const timestamp = new Date().toISOString().replace(/T/, "_").replace(/:/g, "-").split(".")[0];
-    const outFilename = `DL_Verification_Report_${batchClean}_${timestamp}.xlsx`;
+  const batchClean = (currentLocalBatch.filename || "Batch").replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_");
+  const timestamp = new Date().toISOString().replace(/T/, "_").replace(/:/g, "-").split(".")[0];
+  const outFilename = `DL_Verification_Report_${batchClean}_${timestamp}.xlsx`;
 
-    chrome.runtime.sendMessage({
-      action: "DOWNLOAD_FILE",
-      url: reader.result,
-      filename: outFilename,
-      subfolder: "" // Saves directly into Downloads folder
-    }, (res) => {
-      if (res && res.success) {
-        log(`✓ Exported clean styled Excel (Navy Header, Red Expired, Orange Expiring Soon) to Downloads/${outFilename}`, "info");
-      }
-    });
-  };
-  reader.readAsDataURL(finalBlob);
+  // Direct native browser download ensures Chrome strictly names the file .xlsx and never .zip
+  try {
+    const blobUrl = URL.createObjectURL(finalBlob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = outFilename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    }, 2000);
+    log(`✓ Exported clean styled Excel (.xlsx) to Downloads/${outFilename}`, "info");
+  } catch (anchorErr) {
+    console.warn("[Excel Export] Anchor download fallback:", anchorErr);
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      chrome.runtime.sendMessage({
+        action: "DOWNLOAD_FILE",
+        url: reader.result,
+        filename: outFilename,
+        subfolder: ""
+      }, (res) => {
+        if (res && res.success) {
+          log(`✓ Exported clean styled Excel (.xlsx) to Downloads/${outFilename}`, "info");
+        }
+      });
+    };
+    reader.readAsDataURL(finalBlob);
+  }
 }
 
 // Copy G-Sheet Tab-Separated Results to Clipboard
